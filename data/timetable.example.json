@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "SAMPLE timetable — copy this to 'timetable.json' (same folder) and replace",
+    "it with your own weekly class schedule.",
+    "",
+    "Day keys: monday..sunday (lowercase). Times are 24-hour 'HH:MM'.",
+    "'end' is optional; without it a class is assumed to run 55 minutes.",
+    "'where' is optional and only spoken when you ask where a class is.",
+    "'code' and 'faculty' are reference only; nothing reads them aloud.",
+    "",
+    "Consecutive periods of the SAME subject are merged into one block, so two",
+    "back-to-back periods read as one class spanning both.",
+    "",
+    "Edit freely, then say 'reload my timetable' — no restart needed."
+  ],
+
+  "monday": [
+    {"start": "09:00", "end": "10:00", "subject": "Mathematics",
+     "code": "MATH101", "faculty": "TBD", "where": "Room 101"},
+    {"start": "10:00", "end": "11:00", "subject": "Physics",
+     "code": "PHY101", "faculty": "TBD"},
+    {"start": "11:30", "end": "13:30", "subject": "Data Structures",
+     "code": "CS201", "faculty": "TBD", "where": "Lab 2"}
+  ],
+
+  "tuesday": [
+    {"start": "09:00", "end": "10:00", "subject": "Computer Networks",
+     "code": "CS210", "faculty": "TBD"},
+    {"start": "10:00", "end": "11:00", "subject": "Operating Systems",
+     "code": "CS220", "faculty": "TBD"}
+  ],
+
+  "wednesday": [
+    {"start": "09:00", "end": "11:00", "subject": "Data Structures",
+     "code": "CS201", "faculty": "TBD", "where": "Lab 2"},
+    {"start": "14:00", "end": "15:00", "subject": "Elective",
+     "code": "ELEC1", "faculty": "TBD"}
+  ],
+
+  "thursday": [
+    {"start": "09:00", "end": "10:00", "subject": "Operating Systems",
+     "code": "CS220", "faculty": "TBD"},
+    {"start": "10:00", "end": "11:00", "subject": "Mathematics",
+     "code": "MATH101", "faculty": "TBD"}
+  ],
+
+  "friday": [
+    {"start": "09:00", "end": "10:00", "subject": "Computer Networks",
+     "code": "CS210", "faculty": "TBD"},
+    {"start": "11:30", "end": "12:30", "subject": "Physics",
+     "code": "PHY101", "faculty": "TBD"}
+  ],
+
+  "saturday": [],
+  "sunday": []
+}

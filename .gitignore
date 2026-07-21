@@ -1,0 +1,12 @@
+# Real secrets. Ignore every .env variant (.env.bak, .env.local, .env.old ...)
+# and re-include only the placeholder template that SHOULD be committed.
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+data/*
+!data/timetable.example.json
+backend/cache/*.wav

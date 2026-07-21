@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src ws://127.0.0.1:*; style-src 'self'" />
+  <title>JARVIS</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="hud">
+    <div id="drag-strip">
+      <span id="drag-hint">⋮⋮ drag</span>
+      <span id="strip-buttons">
+        <button id="min-btn" title="Minimize to corner orb">_</button>
+        <button id="close-btn" title="Quit JARVIS (Ctrl+Alt+Q)">✕</button>
+      </span>
+    </div>
+
+    <div id="reactor-wrap">
+      <canvas id="reactor" width="220" height="220"></canvas>
+      <div id="status-label">OFFLINE</div>
+      <!-- Round timer/stopwatch widget: appears at the side when active, click
+           toggles a stopwatch. Hidden by default. -->
+      <div id="timer-widget" class="hidden" title="Click to start/stop a stopwatch">
+        <span id="timer-kind">TIMER</span>
+        <span id="timer-value">0:00</span>
+      </div>
+    </div>
+
+    <div id="log-panel">
+      <div id="log-header">
+        <span class="hdr-line"></span>
+        <span id="log-title">TRANSCRIPT</span>
+        <button id="log-toggle" title="collapse">▾</button>
+      </div>
+      <div id="log"></div>
+    </div>
+
+    <div id="chrome-bar">
+      <span class="bar-left">
+        <button id="mic-btn" title="trigger listening">◉ MIC</button>
+        <button id="mute-btn" title="Mute the microphone (Ctrl+Alt+M)">MUTE</button>
+        <button id="stop-btn" title="Stop the current request">■ STOP</button>
+        <!-- Keyboard sits on the same row as STOP, pushed right so it's always
+             visible as an available option, but not jammed against the edge
+             where the status labels live. The text box below it is unchanged. -->
+        <button id="kbd-btn" title="Type a command">⌨</button>
+      </span>
+      <span id="muted-label">● MIC OFF</span>
+      <span id="voice-label" title="">▲ VOICE</span>
+      <span id="conn-dot" title="backend connection"></span>
+    </div>
+
+    <!-- Typed-command box: collapsed by default, sits below the bar so it never
+         covers the reactor. Runs the EXACT same pipeline as a spoken command. -->
+    <div id="text-box" class="collapsed">
+      <input id="text-input" type="text" placeholder="Type a command…"
+             autocomplete="off" spellcheck="false" />
+      <button id="text-send" title="Send (Enter)">➤</button>
+    </div>
+  </div>
+
+  <script src="hud.js"></script>
+</body>
+</html>

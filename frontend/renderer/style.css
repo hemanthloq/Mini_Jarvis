@@ -1,0 +1,351 @@
+/* JARVIS HUD — dark, cyan glow, thin geometric lines */
+:root {
+  --cyan: #35e0ff;
+  --cyan-dim: rgba(53, 224, 255, 0.35);
+  --cyan-faint: rgba(53, 224, 255, 0.12);
+  --bg: rgba(6, 12, 18, 0.72);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+
+html, body { background: transparent; overflow: hidden; height: 100%; }
+
+body {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  color: var(--cyan);
+}
+
+#hud {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100vh;
+  padding: 10px 12px 8px;
+  transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: 100% 100%;
+}
+
+/* Retracted: whole HUD scales down into the bottom-right corner; only the
+   reactor stays visible as a small orb. Window itself is click-through. */
+body.retracted #hud {
+  transform: scale(0.24) translate(52px, 258px);
+}
+
+/* Asleep: dormant and dark. The wake word still works — this is not a quit. */
+body.asleep #hud { opacity: 0.45; }
+body.asleep #status-label { color: rgba(53, 224, 255, 0.25); }
+
+#log-panel, #chrome-bar, #drag-strip, #status-label {
+  transition: opacity 0.3s;
+}
+body.retracted #log-panel,
+body.retracted #chrome-bar,
+body.retracted #drag-strip,
+body.retracted #status-label {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#drag-strip {
+  height: 18px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--cyan-faint);
+  cursor: grab;                /* manual drag via JS, not app-region */
+}
+#drag-strip:active { cursor: grabbing; }
+
+#drag-hint { font-size: 10px; color: var(--cyan-faint); letter-spacing: 2px; }
+
+#strip-buttons { display: flex; gap: 2px; }
+
+#min-btn, #close-btn {
+  background: none;
+  border: none;
+  color: var(--cyan-dim);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 5px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+#hud:hover #min-btn,
+#hud:hover #close-btn { opacity: 1; }
+#min-btn:hover { color: var(--cyan); text-shadow: 0 0 8px var(--cyan-dim); }
+#close-btn:hover { color: #ff6b6b; text-shadow: 0 0 8px rgba(255, 80, 80, 0.7); }
+
+/* Small rounded cyan icon toggle for the text box — top-right with min/close. */
+/* Lives in the bottom bar now, on the STOP row. `margin-left: auto` pushes it
+   to the right of the button group so it reads as a distinct, always-available
+   option — without shoving it against the MIC OFF / VOICE labels. */
+#kbd-btn {
+  background: rgba(40, 110, 170, 0.18);
+  border: 1px solid var(--cyan-dim);
+  color: var(--cyan);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 3px 9px;
+  margin-left: 18px;
+  border-radius: 999px;
+  /* Was 0.55 and only became visible on hover, which is no use for a control
+     you are meant to NOTICE is available. It sits in the bar now, so it stays
+     legible like MIC and MUTE do. */
+  opacity: 0.85;
+  transition: opacity 0.2s, background 0.2s, box-shadow 0.2s;
+  -webkit-app-region: no-drag;
+}
+#hud:hover #kbd-btn { opacity: 1; }
+#kbd-btn:hover {
+  background: rgba(60, 150, 210, 0.4);
+  box-shadow: 0 0 8px var(--cyan-dim);
+}
+#kbd-btn.active {
+  background: rgba(60, 150, 210, 0.55);
+  opacity: 1;
+  box-shadow: 0 0 8px var(--cyan-dim);
+}
+
+/* ── Arc reactor ─────────────────────────────── */
+/* Expanded: the reactor doubles as the drag handle (manual JS drag —
+   app-region:drag is not used because it swallows mouse events). */
+#reactor-wrap { position: relative; margin-top: 6px; cursor: grab; }
+#reactor-wrap:active { cursor: grabbing; }
+body.retracted #reactor-wrap { cursor: pointer; }
+#reactor { display: block; }
+
+#status-label {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: -4px;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 5px;
+  color: var(--cyan-dim);
+}
+
+/* ── Transcript log ──────────────────────────── */
+#log-panel {
+  width: 100%;
+  flex: 1;
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#log-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.hdr-line { flex: 1; height: 1px; background: var(--cyan-faint); }
+
+#log-title { font-size: 9px; letter-spacing: 3px; color: var(--cyan-dim); }
+
+#log-toggle {
+  background: none;
+  border: none;
+  color: var(--cyan-dim);
+  cursor: pointer;
+  font-size: 11px;
+}
+#log-toggle:hover { color: var(--cyan); }
+
+#log {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--cyan-faint);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.55;
+}
+#log.collapsed { display: none; }
+
+#log::-webkit-scrollbar { width: 4px; }
+#log::-webkit-scrollbar-thumb { background: var(--cyan-dim); }
+
+.line          { color: rgba(160, 220, 235, 0.6); }
+.line.user     { color: var(--cyan); }
+.line.user::before   { content: "» "; opacity: 0.6; }
+.line.jarvis   { color: #b8f3ff; }
+.line.jarvis::before { content: "◈ "; opacity: 0.6; }
+.line.interim  { opacity: 0.45; font-style: italic; }
+
+/* ── Bottom chrome ───────────────────────────── */
+#chrome-bar {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+}
+
+.bar-left { display: flex; gap: 6px; }
+
+#mic-btn, #mute-btn {
+  background: none;
+  border: 1px solid var(--cyan-dim);
+  color: var(--cyan);
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 9px;
+  letter-spacing: 2px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+#mic-btn:hover, #mute-btn:hover {
+  background: var(--cyan-faint);
+  box-shadow: 0 0 12px var(--cyan-dim);
+}
+
+/* Stop/cancel: only shown (and clickable) while a request is in progress. */
+#stop-btn {
+  background: none;
+  border: 1px solid rgba(255, 176, 72, 0.6);
+  color: #ffb648;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 9px;
+  letter-spacing: 2px;
+  padding: 4px 10px;
+  cursor: pointer;
+  display: none;
+}
+body.busy #stop-btn { display: inline; }
+#stop-btn:hover { background: rgba(255, 176, 72, 0.15); box-shadow: 0 0 12px rgba(255, 176, 72, 0.5); }
+
+/* ── Muted: unmistakable. Mic is fully off (wake word + button). ── */
+#muted-label {
+  display: none;
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: #ff5252;
+  text-shadow: 0 0 8px rgba(255, 82, 82, 0.6);
+}
+body.muted #muted-label { display: inline; }
+
+body.muted #mute-btn {
+  color: #ff5252;
+  border-color: #ff5252;
+  background: rgba(255, 82, 82, 0.12);
+}
+body.muted #mic-btn {          /* the mic button does nothing while muted */
+  color: rgba(160, 160, 160, 0.45);
+  border-color: rgba(160, 160, 160, 0.3);
+  cursor: not-allowed;
+}
+body.muted #status-label { color: rgba(255, 82, 82, 0.6); }
+
+/* Voice degraded: ElevenLabs is out of quota / down, we're on the Windows voice.
+   Persistent, and never announced aloud — the voice is the broken channel. */
+#voice-label {
+  display: none;
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: #ffb648;
+  text-shadow: 0 0 8px rgba(255, 182, 72, 0.5);
+  cursor: help;
+}
+body.voice-degraded #voice-label { display: inline; }
+
+#conn-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #ff5252;
+  box-shadow: 0 0 8px #ff5252;
+}
+#conn-dot.ok { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+
+/* ── Typed-command box (Part 4) ─────────────────────────────── */
+#text-box {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin: 6px 8px 4px;
+  padding: 4px;
+  border: 1px solid rgba(90, 180, 255, 0.30);
+  border-radius: 7px;
+  background: rgba(4, 16, 28, 0.85);
+  -webkit-app-region: no-drag;
+  overflow: hidden;
+  transition: max-height 0.15s ease, opacity 0.15s ease;
+  max-height: 44px;
+  opacity: 1;
+}
+#text-box.collapsed {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-width: 0;
+}
+#text-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(90, 180, 255, 0.22);
+  border-radius: 5px;
+  color: #cfeaff;
+  font: 12px/1.4 "Consolas", "Courier New", monospace;
+  padding: 4px 7px;
+  outline: none;
+}
+#text-input::placeholder { color: rgba(150, 200, 240, 0.45); }
+#text-send {
+  flex: 0 0 auto;
+  background: rgba(40, 110, 170, 0.6);
+  border: none;
+  border-radius: 5px;
+  color: #eaf6ff;
+  cursor: pointer;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+#text-send:hover { background: rgba(60, 140, 205, 0.8); }
+
+/* ── Round timer / stopwatch widget (Part G) ────────────────── */
+#reactor-wrap { position: relative; }
+#timer-widget {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  background: radial-gradient(circle at 50% 40%, rgba(20, 60, 90, 0.9),
+                              rgba(4, 14, 24, 0.95));
+  border: 2px solid var(--cyan-dim);
+  box-shadow: 0 0 12px rgba(60, 180, 255, 0.35), inset 0 0 10px rgba(0, 0, 0, 0.5);
+  color: var(--cyan);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: opacity 0.2s, transform 0.2s, box-shadow 0.2s;
+  z-index: 5;
+}
+#timer-widget.hidden { display: none; }
+#timer-widget:hover { transform: scale(1.06); box-shadow: 0 0 16px rgba(60, 180, 255, 0.6); }
+#timer-widget.running { border-color: var(--cyan); }
+#timer-widget.urgent {
+  border-color: #ff8a5b;
+  color: #ffd0b0;
+  box-shadow: 0 0 16px rgba(255, 120, 60, 0.6);
+  animation: timer-pulse 1s infinite;
+}
+@keyframes timer-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+#timer-kind { font-size: 7px; letter-spacing: 1px; opacity: 0.7; }
+#timer-value { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
