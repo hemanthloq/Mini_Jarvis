@@ -298,11 +298,18 @@ def _timer_stop(m) -> CommandResult:
 # A wrong answer here is worse than a missed one, so accept the whole family.
 _Q = r"(?:what|when|which)\s*(?:s|is|are|was)?\s+"
 _MY = r"(?:my|the|our|todays?|today\s+s)\s+"
+# "show / display / read / pull up ..." openers — real speech says "show my
+# timetable", not only "what's my timetable". Without this they fell through to
+# the LLM, which has no timetable and invented a "not connected" refusal.
+_SHOW = r"(?:show|display|read|list|give|tell|pull\s*up|bring\s*up)\s+(?:me\s+)?"
+# Accept "time table" (two words) as well as "timetable" — normalize() keeps the
+# space, so the one-word-only pattern silently missed "show my time table".
+_TT = r"(?:classes|schedule|time\s?table|lectures|periods)"
 
 
-@_pattern(rf"^(?:{_Q})?(?:{_MY})?next\s+(?:class|lecture|subject|period)$"
+@_pattern(rf"^(?:{_SHOW})?(?:{_Q})?(?:{_MY})?next\s+(?:class|lecture|subject|period)$"
           rf"|^(?:{_Q})?(?:{_MY})?next\s+(?:class|lecture)\s+today$"
-          rf"|^(?:{_Q})?(?:{_MY})?(?:upcoming|following)\s+(?:class|lecture)$")
+          rf"|^(?:{_SHOW})?(?:{_Q})?(?:{_MY})?(?:upcoming|following)\s+(?:class|lecture)$")
 def _next_class(m) -> Optional[CommandResult]:
     from system import timetable
     return CommandResult(timetable.describe_next(), canned=False,
@@ -327,11 +334,11 @@ _DAYS_RE = (r"today|tomorrow|tomorow|monday|tuesday|tues|wednesday|wed|"
 
 # Python forbids reusing a group name across alternatives, so each branch gets
 # its own and the handler takes whichever matched.
-@_pattern(rf"^(?:{_Q})?(?:{_MY})?(?:classes|schedule|timetable|lectures|periods)"
+@_pattern(rf"^(?:{_SHOW})?(?:{_Q})?(?:{_MY})?{_TT}"
           rf"(?:\s+(?:for|on|this)?\s*(?P<day_a>{_DAYS_RE}))?$"
           rf"|^what\s+do\s+i\s+have\s+(?:on\s+|for\s+)?(?P<day_b>{_DAYS_RE})$"
-          rf"|^(?:{_Q})?(?:{_MY})?(?P<day_c>{_DAYS_RE})\s+"
-          rf"(?:classes|schedule|timetable)$")
+          rf"|^(?:{_SHOW})?(?:{_Q})?(?:{_MY})?(?P<day_c>{_DAYS_RE})\s+"
+          rf"{_TT}$")
 def _classes_today(m) -> Optional[CommandResult]:
     from system import timetable
     g = m.groupdict()

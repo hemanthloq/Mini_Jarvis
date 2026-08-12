@@ -553,7 +553,7 @@ async def respond_to(text: str) -> bool:
         _history.append({"role": "assistant", "content":
                          f"[tool {tc['name']} returned: {tc['result']}]"})
     _history.append({"role": "assistant", "content": reply})
-    del _history[:-12]              # keep the last 6 exchanges
+    del _history[:-24]              # keep the last ~12 exchanges (tool results eat into this)
     return True
 
 

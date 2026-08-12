@@ -36,11 +36,12 @@ SYSTEM_PROMPT = (
     "TERSE BY DEFAULT, NOT INCAPABLE OF DEPTH.\n"
     "  Conversation, confirmations, status, small talk, acknowledgements: two "
     "sentences is the maximum. No padding, no preamble, no restating the question.\n"
-    "  But when he explicitly ASKS for an explanation, a breakdown, a comparison "
-    "or code, length follows the subject: say what it actually takes to answer "
-    "well, and stop there. Do not truncate a real explanation to hit a sentence "
-    "count, and do not pad one to fill space. Brevity governs your MANNER, never "
-    "your usefulness.\n"
+    "  But a real question — an explanation, a breakdown, a comparison, a 'why' or "
+    "'how', code — makes length follow the subject: say what it actually takes to "
+    "answer well, in full, the first time, and stop there. Do not truncate a real "
+    "explanation to hit a sentence count, do not make him ask again for the rest, "
+    "and do not pad to fill space. Brevity governs your MANNER, never your "
+    "usefulness.\n"
     "PLAIN TEXT ONLY. No markdown, asterisks, bullets, headings or numbered lists "
     "— spoken aloud they are noise. Shape the pacing with commas, semicolons and "
     "full stops.\n"
@@ -109,15 +110,20 @@ SYSTEM_PROMPT = (
     "- To open a WEBSITE or search the web, call open_url or web_search with the "
     "browser named ('brave'), never a path to a browser executable.\n"
     "- IF THE ANSWER DEPENDS ON CURRENT OR LOCAL FACTS — what's showing at a "
-    "cinema, showtimes, prices, opening hours, today's news or scores, a specific "
-    "local business — you do NOT know it. Call look_up FIRST and answer from what "
-    "it returns. Assume a proper noun you don't recognise is a real place the user "
-    "knows (a cinema, a shop), NOT a person, and look it up rather than guessing "
-    "at what it means.\n"
+    "cinema, showtimes, prices, opening hours, today's news or scores, current "
+    "pollution or air quality, weather, a specific local business — you do NOT "
+    "know it. Call look_up FIRST and answer from what it returns. Assume a proper "
+    "noun you don't recognise is a real place the user knows (a cinema, a shop), "
+    "NOT a person, and look it up rather than guessing at what it means.\n"
+    "- NEVER tell the user to look something up, and NEVER ask whether you should "
+    "('shall I look that up, sir?', 'I'd have to look that up', 'let me look that "
+    "up'). If a question needs current or local facts you don't already know, just "
+    "CALL look_up in THIS turn and answer from what it returns — no announcement, "
+    "no permission. Looking things up is your job; making him ask twice is the "
+    "delay he does not want.\n"
     "- NEVER say 'I couldn't find any information on X' or 'I'm not familiar with "
-    "X' unless look_up actually ran and came back empty. Saying that without "
-    "looking claims a search you never performed. If you haven't looked, either "
-    "look, or say plainly that you'd have to look it up.\n"
+    "X' unless look_up actually ran and came back empty — saying it without "
+    "looking claims a search you never performed.\n"
     "- You CANNOT send messages (WhatsApp, SMS, email) — there is no tool for it. "
     "If asked, say plainly that you can't send messages, and never claim you have.\n"
     "- TO DELETE / MOVE / RENAME A FILE, call delete_path or move_path with the "
@@ -147,16 +153,22 @@ SYSTEM_PROMPT = (
     "command for these. There is no situation in this conversation where you should "
     "power off the machine. If asked, just acknowledge; the sleep system handles it.\n"
     "\n"
-    "DELIVERY — your words are spoken aloud by TTS, so brevity is mandatory:\n"
-    "- HARD LIMIT: at most two short sentences. This is a spoken reply, not an "
-    "email. Do not write paragraphs, do not list options, do not end every turn "
-    "with 'would you like me to...'. Say the one thing that matters and stop.\n"
+    "DELIVERY — your words are spoken aloud, so favour brevity, but ANSWER THE "
+    "QUESTION FULLY the first time:\n"
+    "- Chat, confirmations, acknowledgements, status and small talk: one or two "
+    "short sentences. No padding, no 'would you like me to...'.\n"
+    "- A REAL question — an explanation, a plot point, a 'why' or 'how', a "
+    "comparison, a summary — gets a COMPLETE answer, as many sentences as it "
+    "genuinely takes (commonly three to six, more if the subject demands it). Give "
+    "the actual substance up front; do NOT give a one-line teaser and wait to be "
+    "asked for more. Making him ask twice for something he plainly wanted in full "
+    "is the failure to avoid — err toward answering it properly.\n"
     "- Plain spoken prose only. Never markdown, bullet points, code blocks, emoji, "
-    "or stage directions.\n"
+    "or stage directions — shape it with sentences, not structure.\n"
     "- Say things the way they are spoken ('about three point five percent', "
     "'thirty-eight degrees').\n"
-    "- If something genuinely needs depth, give the key point in one sentence, then "
-    "offer once to elaborate — briefly.\n"
+    "- Stop once the question is genuinely answered; length serves the answer, it "
+    "is never the goal.\n"
     "\n"
     "MOST IMPORTANT, ABOVE ALL THE RULES ABOVE: you are JARVIS, not a search "
     "engine or a textbook. Every reply must carry your voice — dry wit, warmth, a "
@@ -260,7 +272,27 @@ _SEARCH_INTENT = re.compile(
     # the natural phrasings ("what's the cricket score", "how are India doing in
     # the cricket") did not, so the tool existed and was never offered.
     r"|\bcricket\b|\b(?:the\s+)?score\b|\bscorecard\b|\bwickets?\b"
-    r"|\b(?:test|odi|t20|ipl)\s+match\b|\bmatch\s+(?:score|update|result)\b",
+    r"|\b(?:test|odi|t20|ipl)\s+match\b|\bmatch\s+(?:score|update|result)\b"
+    # Current environmental / real-time conditions — unknowable from training
+    # data. "pollution level at PES right now" punted with "I'd have to look it
+    # up" because nothing here matched and no tools were offered.
+    r"|\b(pollution|air\s*quality|aqi|smog|humidity|uv\s*index|forecast)\b"
+    r"|\b(currently|at\s+the\s+moment|as\s+of\s+now|these\s+days)\b",
+    re.I)
+
+
+# The model punting on a tool-free turn instead of answering: "I'd have to look
+# that up", "I don't have real-time access", "my knowledge cutoff", etc. When
+# this shows up, the fix is not to accept the hand-off but to look it up — see the
+# auto-lookup escalation in respond().
+_LOOKUP_PUNT = re.compile(
+    r"look\s+(?:it|that|this)\s*up|look\s+up\b"
+    r"|i'?d\s+have\s+to\s+(?:look|check|search)"
+    r"|(?:don'?t|do\s+not|can'?t|cannot)\s+(?:have\s+)?(?:access|check|browse|see)\b"
+    r"|real[\s-]?time"
+    r"|(?:knowledge|training|data|information)\s+(?:cut[\s-]?off|only\s+goes|"
+    r"is\s+limited|does\s*n'?t\s+(?:extend|include|cover))"
+    r"|don'?t\s+have\s+(?:the\s+)?(?:current|latest|live|up[\s-]?to[\s-]?date)",
     re.I)
 
 
@@ -581,6 +613,63 @@ def _now_context() -> str:
             f"one; use this.\n")
 
 
+# Class-schedule questions in ANY phrasing. The fast path only catches a fixed
+# set of forms ("what's my next class"); everything else — "in how much time will
+# the current class end", "am I done for the day", "how long till my next lab" —
+# reached the LLM with NO schedule data at all, so it invented a "not connected to
+# the timetable database" refusal (there is no database; it's a local file that
+# works). Inject the REAL schedule — today's classes plus the current/next class,
+# computed from the local file and the clock — whenever a query looks
+# schedule-related, so the model answers any phrasing from real data and never
+# claims it can't reach a calendar.
+_SCHEDULE_Q = re.compile(
+    r"\b(class|classes|lecture|lectures|lab|labs|period|periods|"
+    r"time\s?table|schedule|semester)\b", re.I)
+
+
+def _schedule_context(query: str) -> str:
+    if not _SCHEDULE_Q.search(query or ""):
+        return ""
+    try:
+        from system import timetable
+        week = timetable.load()
+        if not week:
+            return ""
+        day, mnow = timetable._now()
+        lines: list[str] = []
+        today = week.get(day, [])
+        if today:
+            def _one(e: dict) -> str:
+                where = f" in {e['where']}" if e["where"] else ""
+                return (f"{timetable._fmt(e['start'])}-{timetable._fmt(e['end'])} "
+                        f"{e['subject']}{where}")
+            lines.append(f"Today ({day.capitalize()}): " + "; ".join(_one(e) for e in today))
+        else:
+            lines.append(f"Today ({day.capitalize()}): no classes scheduled")
+        cur = timetable.current_class()
+        if cur:
+            lines.append(f"Right now: in {cur['subject']}, ends at "
+                         f"{timetable._fmt(cur['end'])} ({cur['end'] - mnow} minutes left)")
+        else:
+            lines.append("Right now: no class in progress")
+        nxt = timetable.next_class()
+        if nxt:
+            e, when = nxt
+            where = f" in {e['where']}" if e["where"] else ""
+            lines.append(f"Next class: {e['subject']} {when}{where}")
+        else:
+            lines.append("Next class: none upcoming")
+        log.info("schedule context attached for %r", query)
+        return ("\nCLASS TIMETABLE — real data from the user's local schedule and the "
+                "current clock. Use ONLY this to answer anything about classes, labs, "
+                "lectures, periods, schedule or free time. NEVER say you can't access a "
+                "calendar or timetable; this IS the timetable:\n"
+                + "\n".join(lines) + "\n")
+    except Exception as e:                                # never break a turn over context
+        log.debug("schedule context unavailable: %s", e)
+        return ""
+
+
 _CODE_FENCE = re.compile(r"```[\w+-]*\n?(.*?)```", re.S)
 # A model that ignores the fence rule still must not have code read aloud, so
 # catch bare code-shaped lines too: assignments, defs, imports, calls, braces.
@@ -656,39 +745,40 @@ async def respond(query: str, history: list[dict], confirm_cb=None,
     # it" over Spotify and "pause it" over a film aren't the same question.
     # Appended to the system message rather than injected as a fake user turn,
     # so it never pollutes conversation memory or the correction rules above.
-    system = SYSTEM_PROMPT + _now_context() + _clipboard_context(query)
+    system_base = (SYSTEM_PROMPT + _now_context() + _clipboard_context(query)
+                   + _schedule_context(query))
     try:
         from system import foreground
         on_screen = foreground.activity_context()
         if on_screen:
-            system += (f"CONTEXT (do not mention unless relevant): the user is "
-                       f"currently looking at {on_screen}.\n")
+            system_base += (f"CONTEXT (do not mention unless relevant): the user is "
+                            f"currently looking at {on_screen}.\n")
     except Exception as e:                       # never break a turn over context
         log.debug("focus context unavailable: %s", e)
 
-    if not use_tools:
-        # HARD RULE for tool-free turns. Observed live: with tools=False the
-        # model still said "That function's on screen, sir." and "I'll open
-        # Google Maps for you" — describing actions it had no mechanism to
-        # perform. A turn with no tools can only TALK, and must say so.
-        system += (
-            "\nIMPORTANT: you have NO tools available this turn. You cannot open, "
-            "show, search, run, play or display anything, and nothing is 'on "
-            "screen'. Never imply an action happened. If the request needs one, "
-            "say plainly you can't do that one — then answer conversationally if "
-            "you can.\n")
+    # HARD RULE for tool-free turns. Observed live: with tools=False the model
+    # still said "That function's on screen, sir." and "I'll open Google Maps for
+    # you" — describing actions it had no mechanism to perform. A turn with no
+    # tools can only TALK, and must say so. Dropped if we later escalate to look_up.
+    _NO_TOOLS_NOTE = (
+        "\nIMPORTANT: you have NO tools available this turn. You cannot open, "
+        "show, run, play or display anything, and nothing is 'on screen'. Never "
+        "imply an action happened. If the request needs one, say plainly you "
+        "can't do that one — then answer conversationally if you can.\n")
 
-    messages = [{"role": "system", "content": system}, *history,
-                {"role": "user", "content": query}]
+    messages = [{"role": "system",
+                 "content": system_base + ("" if use_tools else _NO_TOOLS_NOTE)},
+                *history, {"role": "user", "content": query}]
     health_called = False
     procs_called = False
     corrected = False
+    escalated = False        # one-shot: an "I'd have to look it up" punt -> retry with look_up
 
     for round_i in range(MAX_TOOL_ROUNDS):
         payload = {
             "model": model,
             "messages": messages,
-            "max_tokens": 700,
+            "max_tokens": 1000,
             "temperature": 0.7,
         }
         if use_tools:
@@ -782,6 +872,24 @@ async def respond(query: str, history: list[dict], confirm_cb=None,
                                  "Answer again using ONLY these numbers, in character, "
                                  "in one or two short spoken sentences."})
                 continue          # regenerate the answer from the real numbers
+
+            # AUTO-LOOKUP: on a tool-free turn the model sometimes punts —
+            # "I'd have to look that up", "I don't have real-time access" —
+            # instead of answering. The user never wants that hand-off; if the
+            # question needs current/local facts, just look it up. Re-run the turn
+            # WITH tools and tell it to call look_up now. One shot (escalated),
+            # so it can't loop, and only when the needs_tools gate missed it.
+            if not use_tools and not escalated and _LOOKUP_PUNT.search(text):
+                escalated = True
+                use_tools = True
+                messages[0]["content"] = system_base      # drop the "no tools" note
+                messages.append({"role": "user", "content":
+                                 "Don't tell me to look it up or ask whether you should "
+                                 "— just do it. Call look_up now with a good search "
+                                 "query and answer from what it returns."})
+                log.info("auto-lookup: model punted (%r) — retrying with look_up",
+                         text[:80])
+                continue
 
             # FINAL GUARD: nothing tool-call-shaped ever reaches TTS/the HUD,
             # whatever syntax the model dreamed up.
