@@ -315,6 +315,22 @@ _MAPS_INTENT = re.compile(
     re.I)
 
 
+_INFO_SCHEMAS: list | None = None
+
+
+def _info_schemas() -> list:
+    """The read-only informational tools (just look_up), offered on EVERY turn so
+    the model can always fetch current/local facts rather than punting with 'I'd
+    have to look that up'. The action/system tools stay gated behind needs_tools
+    so casual chat can never trigger a shell command or a file operation. Built
+    lazily because tools imports this module."""
+    global _INFO_SCHEMAS
+    if _INFO_SCHEMAS is None:
+        _INFO_SCHEMAS = [s for s in tools.SCHEMAS
+                         if s["function"]["name"] == "look_up"]
+    return _INFO_SCHEMAS
+
+
 def needs_tools(query: str) -> bool:
     """True only when the query is a genuine machine action, a live-system-status
     question, or a real/explicit search. Everything else — general knowledge,
@@ -756,15 +772,18 @@ async def respond(query: str, history: list[dict], confirm_cb=None,
     except Exception as e:                       # never break a turn over context
         log.debug("focus context unavailable: %s", e)
 
-    # HARD RULE for tool-free turns. Observed live: with tools=False the model
-    # still said "That function's on screen, sir." and "I'll open Google Maps for
-    # you" — describing actions it had no mechanism to perform. A turn with no
-    # tools can only TALK, and must say so. Dropped if we later escalate to look_up.
+    # On a turn without the ACTION tools, look_up is still available (see the
+    # payload below) so the model can always pull current/local facts instead of
+    # punting. It must NOT pretend to do the action-only things, though — observed
+    # live, with tools off it still said "That function's on screen, sir." and
+    # "I'll open Google Maps for you", describing actions it had no mechanism for.
     _NO_TOOLS_NOTE = (
-        "\nIMPORTANT: you have NO tools available this turn. You cannot open, "
-        "show, run, play or display anything, and nothing is 'on screen'. Never "
-        "imply an action happened. If the request needs one, say plainly you "
-        "can't do that one — then answer conversationally if you can.\n")
+        "\nThe ONLY tool you have this turn is look_up (a web search that returns "
+        "text). You cannot open, run, play, or display anything, and nothing is "
+        "'on screen' — never imply such an action happened; if asked for one, say "
+        "plainly you can't do that one. But whenever answering needs current or "
+        "local facts you don't already know, CALL look_up and answer from what it "
+        "returns. NEVER tell the user to look it up or ask whether you should.\n")
 
     messages = [{"role": "system",
                  "content": system_base + ("" if use_tools else _NO_TOOLS_NOTE)},
@@ -782,7 +801,10 @@ async def respond(query: str, history: list[dict], confirm_cb=None,
             "temperature": 0.7,
         }
         if use_tools:
-            payload["tools"] = tools.SCHEMAS
+            payload["tools"] = tools.SCHEMAS          # full set (actions + look_up)
+            payload["tool_choice"] = "auto"
+        else:
+            payload["tools"] = _info_schemas()        # look_up only — always available
             payload["tool_choice"] = "auto"
         data = await _post(payload)
         msg = data["choices"][0]["message"]
