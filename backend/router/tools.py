@@ -530,9 +530,103 @@ def get_timetable(day: str | None = None, _confirmed: bool = False) -> Any:
                     "already computed from the real clock; do not recompute times."}
 
 
+# ── Loose-NL wrappers over the fast path's own system modules, so the LLM can
+#    handle any phrasing for these (not just the fast path's exact forms). All
+#    non-destructive, so none needs confirmation. ──
+def set_volume(level: Any = None, change: Any = None, mute: Any = None,
+               _confirmed: bool = False) -> Any:
+    """Master volume: `level` absolute 0-100, `change` relative step (e.g. -10 for
+    'turn it down a bit'), or `mute` true/false. None given -> report current."""
+    from system import volume
+    try:
+        if mute is not None:
+            return {"say": volume.mute() if mute else volume.unmute()}
+        if level is not None:
+            return {"say": volume.set_volume(int(level))}
+        if change is not None:
+            return {"say": volume.set_volume(volume.get_volume() + int(change))}
+        return {"say": f"Volume's at {volume.get_volume()} percent, sir."}
+    except (TypeError, ValueError):
+        return {"error": "level/change must be numbers; mute must be true/false"}
+
+
+def set_brightness(level: Any = None, change: Any = None, _confirmed: bool = False) -> Any:
+    """Screen brightness: `level` absolute 0-100, or `change` relative step."""
+    from system import volume
+    try:
+        if level is not None:
+            return {"say": volume.set_brightness(int(level))}
+        if change is not None:
+            return {"say": volume.brightness_step(int(change))}
+        return {"error": "give a brightness level (0-100) or a change amount"}
+    except (TypeError, ValueError):
+        return {"error": "level/change must be numbers"}
+    except Exception as e:                       # sbc raises on unsupported displays
+        return {"error": f"brightness control unavailable ({type(e).__name__})"}
+
+
+def media_control(action: str = "", _confirmed: bool = False) -> Any:
+    """Transport control for whatever is playing: pause, play, next, previous, stop."""
+    from system import media
+    fn = {"pause": media.pause_play, "play": media.pause_play,
+          "resume": media.pause_play, "toggle": media.pause_play,
+          "next": media.next_track, "skip": media.next_track, "forward": media.next_track,
+          "previous": media.previous_track, "prev": media.previous_track,
+          "back": media.previous_track, "stop": media.stop}.get((action or "").lower().strip())
+    if fn is None:
+        return {"error": f"unknown media action {action!r} — use pause/play/next/previous/stop"}
+    return {"say": fn()}
+
+
+def play_music(song: str = "", artist: str | None = None, _confirmed: bool = False) -> Any:
+    """Play a specific song on Spotify by name (optionally by a given artist)."""
+    from system import media
+    if not (song or "").strip():
+        return {"error": "no song specified"}
+    return {"say": media.play_song(song, artist)}
+
+
+def set_reminder(task: str = "", minutes_from_now: Any = None,
+                 at_time: str | None = None, _confirmed: bool = False) -> Any:
+    """Set a spoken reminder. Give `task` plus EITHER `minutes_from_now` (a number)
+    OR `at_time` as 'HH:MM' 24-hour. It fires aloud when due."""
+    import datetime
+    import time as _time
+    from system import reminders
+    task = (task or "").strip() or "your reminder"
+    at_ts = None
+    if minutes_from_now is not None:
+        try:
+            mins = float(minutes_from_now)
+        except (TypeError, ValueError):
+            return {"error": "minutes_from_now must be a number"}
+        if mins <= 0:
+            return {"error": "minutes_from_now must be positive"}
+        at_ts = _time.time() + mins * 60
+    elif at_time:
+        try:
+            hh, mm = (int(x) for x in str(at_time).split(":")[:2])
+            now = datetime.datetime.now()
+            t = now.replace(hour=hh % 24, minute=mm, second=0, microsecond=0)
+            if t <= now:                          # already passed today -> tomorrow
+                t += datetime.timedelta(days=1)
+            at_ts = t.timestamp()
+        except (TypeError, ValueError):
+            return {"error": "at_time must be 'HH:MM' in 24-hour form"}
+    if at_ts is None:
+        return {"error": "give minutes_from_now or at_time"}
+    reminders.add(task, at_ts)
+    return {"say": f"I'll remind you {reminders.spoken_when(at_ts)}, sir.", "task": task}
+
+
 REGISTRY: dict[str, Callable[..., Any]] = {
     "look_up": look_up,
     "get_timetable": get_timetable,
+    "set_volume": set_volume,
+    "set_brightness": set_brightness,
+    "media_control": media_control,
+    "play_music": play_music,
+    "set_reminder": set_reminder,
     "open_maps": open_maps,
     "cricket_scores": cricket_scores,
     "run_shell_command": run_shell_command,
@@ -570,6 +664,78 @@ SCHEMAS = [
                                            "weekday like 'friday'. Omit for today."},
                 },
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_volume",
+            "description": (
+                "Set the master volume. Use 'level' for an absolute 0-100 value, "
+                "'change' for a relative step (-10 for 'turn it down a bit', +15 "
+                "for louder), or 'mute' true/false. Omit all to report the current "
+                "volume."),
+            "parameters": {"type": "object", "properties": {
+                "level": {"type": "integer", "description": "Absolute volume 0-100."},
+                "change": {"type": "integer", "description": "Relative change, e.g. -10 or 15."},
+                "mute": {"type": "boolean", "description": "true to mute, false to unmute."},
+            }},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_brightness",
+            "description": ("Set screen brightness. 'level' = absolute 0-100, or "
+                            "'change' = relative step (e.g. -20 to dim, +20 to brighten)."),
+            "parameters": {"type": "object", "properties": {
+                "level": {"type": "integer", "description": "Absolute brightness 0-100."},
+                "change": {"type": "integer", "description": "Relative change, e.g. -20 or 20."},
+            }},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "media_control",
+            "description": (
+                "Control whatever is playing (Spotify, video, etc.): pause, play, "
+                "next, previous, or stop. Use for 'pause the music', 'skip this', "
+                "'go back a song', 'stop'. To play a NAMED song use play_music."),
+            "parameters": {"type": "object", "properties": {
+                "action": {"type": "string",
+                           "enum": ["pause", "play", "next", "previous", "stop"],
+                           "description": "Transport action."},
+            }, "required": ["action"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "play_music",
+            "description": ("Play a specific song on Spotify by name (optionally a "
+                            "given artist). Use for 'play <song>', 'put on <song> by "
+                            "<artist>'. For bare pause/skip/stop use media_control."),
+            "parameters": {"type": "object", "properties": {
+                "song": {"type": "string", "description": "Song title, as spoken."},
+                "artist": {"type": "string", "description": "Optional artist name."},
+            }, "required": ["song"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_reminder",
+            "description": (
+                "Set a reminder that fires aloud when due. Provide 'task' plus "
+                "EITHER 'minutes_from_now' (a number) OR 'at_time' as 'HH:MM' in "
+                "24-hour form. You know the current time from context, so convert "
+                "phrasings like 'in half an hour' or 'at 6pm' yourself."),
+            "parameters": {"type": "object", "properties": {
+                "task": {"type": "string", "description": "What to remind the user about."},
+                "minutes_from_now": {"type": "number", "description": "Minutes until it fires."},
+                "at_time": {"type": "string", "description": "Absolute time 'HH:MM' 24-hour."},
+            }, "required": ["task"]},
         },
     },
     {
