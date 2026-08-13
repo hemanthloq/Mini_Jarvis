@@ -124,6 +124,10 @@ SYSTEM_PROMPT = (
     "- NEVER say 'I couldn't find any information on X' or 'I'm not familiar with "
     "X' unless look_up actually ran and came back empty — saying it without "
     "looking claims a search you never performed.\n"
+    "- For ANYTHING about the user's CLASSES, lectures, labs, timetable, periods, "
+    "or when they are free — however phrased — call get_timetable and answer from "
+    "it. It reads their real local schedule and the clock. Never guess it, and "
+    "never say you can't access a timetable or calendar.\n"
     "- You CANNOT send messages (WhatsApp, SMS, email) — there is no tool for it. "
     "If asked, say plainly that you can't send messages, and never claim you have.\n"
     "- TO DELETE / MOVE / RENAME A FILE, call delete_path or move_path with the "
@@ -327,7 +331,7 @@ def _info_schemas() -> list:
     global _INFO_SCHEMAS
     if _INFO_SCHEMAS is None:
         _INFO_SCHEMAS = [s for s in tools.SCHEMAS
-                         if s["function"]["name"] == "look_up"]
+                         if s["function"]["name"] in ("look_up", "get_timetable")]
     return _INFO_SCHEMAS
 
 

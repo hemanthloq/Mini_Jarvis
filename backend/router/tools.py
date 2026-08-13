@@ -494,8 +494,45 @@ def web_search(query: str, engine: str | None = None, browser: str | None = None
     return result
 
 
+def get_timetable(day: str | None = None, _confirmed: bool = False) -> Any:
+    """Return the user's class schedule from their LOCAL timetable file: the
+    classes on a day (default today), the class in progress right now, and the
+    next upcoming class. Read-only — computed from the file and the real clock, so
+    the model can answer ANY schedule question however it's phrased, instead of
+    the fast path having to match an exact form."""
+    from system import timetable as tt
+    week = tt.load()
+    if not week:
+        return {"has_timetable": False, "say": "There's no timetable set up, sir."}
+    today, mnow = tt._now()
+    target = (tt.resolve_day(day) or today) if day else today
+
+    classes = [{"subject": e["subject"], "start": tt._fmt(e["start"]),
+                "end": tt._fmt(e["end"]), "where": e["where"] or ""}
+               for e in week.get(target, [])]
+
+    cur = tt.current_class()
+    current = None if cur is None else {
+        "subject": cur["subject"], "ends": tt._fmt(cur["end"]),
+        "minutes_left": cur["end"] - mnow, "where": cur["where"] or ""}
+
+    nxt = tt.next_class()
+    upcoming = None
+    if nxt is not None:
+        e, when = nxt
+        upcoming = {"subject": e["subject"], "when": when, "where": e["where"] or ""}
+
+    log.info("TOOL get_timetable(day=%s) -> %d classes, current=%s", target,
+             len(classes), bool(current))
+    return {"has_timetable": True, "day": target, "classes": classes,
+            "current_class": current, "next_class": upcoming,
+            "note": "Answer naturally from this. minutes_left and 'when' are "
+                    "already computed from the real clock; do not recompute times."}
+
+
 REGISTRY: dict[str, Callable[..., Any]] = {
     "look_up": look_up,
+    "get_timetable": get_timetable,
     "open_maps": open_maps,
     "cricket_scores": cricket_scores,
     "run_shell_command": run_shell_command,
@@ -513,6 +550,28 @@ REGISTRY: dict[str, Callable[..., Any]] = {
 
 # ── OpenAI/Groq tool schemas ────────────────────────────────────
 SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_timetable",
+            "description": (
+                "Get the user's class schedule from their LOCAL timetable: the "
+                "classes on a day (default today, or a named day), the class in "
+                "progress right now, and the next upcoming class. Use this for ANY "
+                "question about classes, lectures, labs, periods, the schedule, or "
+                "when they are free, however it is phrased ('what's coming up', "
+                "'am I done for the day', 'anything this afternoon', 'when am I "
+                "free'). Never guess a schedule or say you can't access it."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "day": {"type": "string",
+                            "description": "Optional day: 'today', 'tomorrow', or a "
+                                           "weekday like 'friday'. Omit for today."},
+                },
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
