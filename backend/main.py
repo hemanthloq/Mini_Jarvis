@@ -416,9 +416,9 @@ async def respond_to(text: str) -> bool:
         _last_reference = refer.extract_referent(result.reply)
         return result.command != "end_conversation"
 
-    # ── SMART PATH: Groq + tools ────────────────────────────────
-    if not config.GROQ_API_KEY or not _online("api.groq.com"):
-        log.warning("smart path unavailable (no key or offline)")
+    # ── SMART PATH: LLM (Gemini -> Cerebras -> Groq) + tools ────
+    if not config.HAS_LLM or not _online():
+        log.warning("smart path unavailable (no LLM key or offline)")
         STATE.reply("(offline — smart path unavailable)")
         await _speak("I'm offline at the moment, sir.")
         return False

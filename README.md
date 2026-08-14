@@ -21,7 +21,7 @@ always spoken back for a verbal "yes" before they run.
 | **Backend** | Python 3.11+, FastAPI + Uvicorn (WebSocket server driving the HUD), asyncio orchestrator |
 | **Wake word** | [openWakeWord](https://github.com/dscripka/openWakeWord) (local, offline) — the pretrained `hey_jarvis` model OR-ed with a small custom-trained head that fires on bare "jarvis" with any prefix |
 | **Speech-to-text** | [Deepgram](https://deepgram.com) Nova streaming STT (interim transcripts, ~300 ms endpointing) |
-| **Smart path (LLM)** | [Groq](https://groq.com) OpenAI-compatible chat API — `openai/gpt-oss-20b` by default, escalating to `openai/gpt-oss-120b` for reasoning and tool use |
+| **Smart path (LLM)** | Multi-provider, OpenAI-compatible, with automatic fallback: [Gemini](https://aistudio.google.com) (`gemini-flash-latest`) → [Cerebras](https://cloud.cerebras.ai) → [Groq](https://groq.com). A rate-limit or outage on one switches instantly to the next |
 | **Text-to-speech** | [ElevenLabs](https://elevenlabs.io) streaming TTS through a light DSP chain for the "AI-filtered" timbre, with **Windows SAPI as an automatic fallback** if ElevenLabs is unavailable |
 | **Music** | [Spotify Web API](https://developer.spotify.com) (via spotipy) with a media-key fallback |
 | **HUD** | Electron — a frameless, transparent, click-through always-on-top overlay |
@@ -33,7 +33,8 @@ always spoken back for a verbal "yes" before they run.
 - **Python 3.11+**
 - **Node.js 18+** (for the Electron HUD)
 - A **microphone**
-- API keys (all have free tiers): **Groq**, **Deepgram**, **ElevenLabs**, and a
+- API keys (all have free tiers): a smart-path brain (**Gemini** recommended;
+  **Cerebras** and/or **Groq** as fallbacks), **Deepgram**, **ElevenLabs**, and a
   **Spotify** app. Spotify playback control additionally requires **Spotify Premium**
   and the desktop app signed into the same account.
 
@@ -77,7 +78,9 @@ copy .env.example .env
 
 | Key | Where to get it |
 |---|---|
-| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) — free tier; powers the smart path |
+| `GOOGLE_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — **primary brain**; free, multimodal |
+| `CEREBRAS_API_KEY` | [cloud.cerebras.ai](https://cloud.cerebras.ai) — fast fallback; free, 1M tokens/day |
+| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) — last-resort fallback; free tier |
 | `DEEPGRAM_API_KEY` | [console.deepgram.com](https://console.deepgram.com) — free credit on signup; streaming STT |
 | `ELEVENLABS_API_KEY` | [elevenlabs.io → Settings → API keys](https://elevenlabs.io/app/settings/api-keys) — the voice |
 | `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) → **Create app**. Set the app's **Redirect URI** to exactly `http://127.0.0.1:8888/callback`. |
@@ -183,9 +186,10 @@ and fill in your own weekly schedule — the file itself documents the format.
 
 ## Known limitations
 
-- **Groq free tier is rate-limited** (per-minute token cap). JARVIS rides out `429`s by
-  retrying, so a burst of long queries can add a short delay rather than failing — this
-  is expected, not a bug.
+- **Free-tier rate limits** exist on every provider (per-minute token/request caps).
+  The smart path handles this by **failing over to the next provider** the moment one is
+  throttled, so a busy minute switches brains rather than stalling. Configure more than
+  one provider in `.env` for the smoothest experience.
 - **Spotify playback control requires Premium**, and the desktop app must be signed into
   the *same* account as your API credentials. A free account or a mismatched login can't
   be controlled.

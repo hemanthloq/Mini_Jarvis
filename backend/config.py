@@ -9,6 +9,8 @@ load_dotenv(ROOT / ".env")
 
 # ── API keys ────────────────────────────────────────────────────
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")        # Gemini (primary brain)
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")    # Cerebras (fast fallback)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")  # kept for the Claude path
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
@@ -17,9 +19,35 @@ SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
 
-# ── Models (Groq, OpenAI-compatible) ────────────────────────────
+# ── Smart-path models (all providers are OpenAI-compatible) ──────
+# Groq model IDs, kept for the Groq fallback row below.
 SMART_MODEL_FAST = os.getenv("SMART_MODEL_FAST", "openai/gpt-oss-20b")
 SMART_MODEL_DEEP = os.getenv("SMART_MODEL_DEEP", "openai/gpt-oss-120b")
+
+# Provider chain for the smart path, tried IN ORDER until one answers. A provider
+# with no key is skipped, so this degrades gracefully to whatever you've set up.
+# A rate-limit or error on one switches immediately to the next (see _post in
+# router/smart_path.py) — that is what stops a throttled free tier from timing
+# out a turn, and makes a single provider decommission a non-event.
+LLM_PROVIDERS = [
+    {"name": "gemini",
+     "base": os.getenv("GEMINI_BASE",
+                       "https://generativelanguage.googleapis.com/v1beta/openai"),
+     "key": GOOGLE_API_KEY,
+     "fast": os.getenv("GEMINI_MODEL_FAST", "gemini-flash-latest"),
+     "deep": os.getenv("GEMINI_MODEL_DEEP", "gemini-flash-latest")},
+    {"name": "cerebras",
+     "base": os.getenv("CEREBRAS_BASE", "https://api.cerebras.ai/v1"),
+     "key": CEREBRAS_API_KEY,
+     "fast": os.getenv("CEREBRAS_MODEL_FAST", "gpt-oss-120b"),
+     "deep": os.getenv("CEREBRAS_MODEL_DEEP", "gpt-oss-120b")},
+    {"name": "groq",
+     "base": os.getenv("GROQ_BASE", "https://api.groq.com/openai/v1"),
+     "key": GROQ_API_KEY,
+     "fast": SMART_MODEL_FAST,
+     "deep": SMART_MODEL_DEEP},
+]
+HAS_LLM = any(p["key"] for p in LLM_PROVIDERS)
 
 # Seconds JARVIS keeps listening for a follow-up after finishing a reply
 FOLLOWUP_WINDOW = float(os.getenv("FOLLOWUP_WINDOW", "7"))

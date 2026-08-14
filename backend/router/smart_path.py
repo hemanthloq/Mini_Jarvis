@@ -358,50 +358,72 @@ def pick_model(query: str) -> str:
     return config.SMART_MODEL_FAST       # openai/gpt-oss-20b
 
 
-_RETRY_AFTER = re.compile(r"try again in ([\d.]+)s", re.I)
+def _providers() -> list[dict]:
+    """Configured providers (those with a key), in priority order."""
+    return [p for p in config.LLM_PROVIDERS if p.get("key")]
 
 
-async def _post(payload: dict, attempts: int = 6) -> dict:
-    """POST to Groq, riding out the free tier's per-minute token limit."""
-    headers = {"Authorization": f"Bearer {config.GROQ_API_KEY}",
-               "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=45) as client:
-        for i in range(attempts):
-            r = await client.post(_GROQ_URL, headers=headers, json=payload)
-            if r.status_code == 200:
-                return r.json()
+async def _post(payload: dict, tier: str = "fast", prefer: dict | None = None):
+    """POST an OpenAI-format chat request, trying each provider until one answers.
 
-            # Free tier: 6k tokens/minute. Wait it out rather than failing the turn.
-            if r.status_code == 429 and i < attempts - 1:
-                m = _RETRY_AFTER.search(r.text)
-                wait = min(float(m.group(1)) + 0.5, 12) if m else 5.0
-                log.warning("Groq rate-limited; retrying in %.1fs", wait)
-                await asyncio.sleep(wait)
-                continue
+    A rate-limit or error on one provider switches IMMEDIATELY to the next rather
+    than waiting — that is what keeps a throttled free tier from timing out the
+    turn, and makes any single provider's outage or decommission a non-event.
 
-            # Llama sometimes emits a malformed tool call; Groq rejects it with
-            # tool_use_failed. Retrying deterministically usually fixes it.
-            if (r.status_code == 400 and "tool_use_failed" in r.text
-                    and i < attempts - 1):
-                # Log what the model ACTUALLY emitted. Without this the warning
-                # says only "it failed", and the cause is unguessable — a
-                # `max_results: "5"` string-vs-integer schema mismatch hid here
-                # and silently turned every lookup into "Couldn't pin that down".
+    `tier` picks the model ('fast'/'deep') per provider. `prefer` pins a provider
+    first, so a turn's follow-up tool calls stay on the backend that started it.
+    Returns (response_json, provider_used).
+    """
+    provs = _providers()
+    if not provs:
+        raise RuntimeError("no LLM provider configured (set GOOGLE_API_KEY / "
+                           "CEREBRAS_API_KEY / GROQ_API_KEY in .env)")
+    if prefer is not None:
+        provs = [prefer] + [p for p in provs if p["name"] != prefer["name"]]
+
+    last_err = "no attempt made"
+    async with httpx.AsyncClient(timeout=40) as client:
+        for p in provs:
+            body = {**payload, "model": p[tier]}
+            url = p["base"].rstrip("/") + "/chat/completions"
+            headers = {"Authorization": f"Bearer {p['key']}",
+                       "Content-Type": "application/json"}
+            for attempt in range(2):          # one deterministic retry per provider
                 try:
-                    err = r.json().get("error", {})
-                    log.warning("Groq tool_use_failed: %s | failed_generation=%r",
-                                err.get("message", "")[:200],
-                                (err.get("failed_generation") or "")[:300])
-                except Exception:
-                    log.warning("Groq tool_use_failed (unparseable body): %s",
-                                r.text[:250])
-                log.warning("retrying at low temperature")
-                payload = {**payload, "temperature": 0.1}
-                await asyncio.sleep(0.4)
-                continue
+                    r = await client.post(url, headers=headers, json=body)
+                except Exception as e:        # unreachable -> next provider
+                    last_err = f"{p['name']} {type(e).__name__}: {e}"
+                    log.warning("provider %s unreachable (%s) — trying next", p["name"], e)
+                    break
+                if r.status_code == 200:
+                    if p is not provs[0]:
+                        log.info("smart path answered by fallback provider %r", p["name"])
+                    return r.json(), p
+                # Throttled or overloaded: don't wait — switch providers.
+                if r.status_code in (429, 500, 502, 503, 529):
+                    last_err = f"{p['name']} {r.status_code}"
+                    log.warning("provider %s returned %s — switching provider",
+                                p["name"], r.status_code)
+                    break
+                # A malformed tool call (some models emit bad JSON); one low-temp retry.
+                if (r.status_code == 400 and "tool_use_failed" in r.text
+                        and attempt == 0):
+                    log.warning("provider %s tool_use_failed — retry at low temp", p["name"])
+                    body = {**body, "temperature": 0.1}
+                    continue
+                last_err = f"{p['name']} {r.status_code}: {r.text[:150]}"
+                log.warning("provider %s error (%s) — trying next", p["name"], last_err)
+                break
+    raise RuntimeError(f"all LLM providers failed ({last_err})")
 
-            raise RuntimeError(f"Groq {r.status_code}: {r.text[:300]}")
-    raise RuntimeError("Groq: retries exhausted")
+
+def _pick_tier(query: str) -> str:
+    """'deep' for reasoning/search/long queries (the stronger model per provider),
+    else 'fast'."""
+    if (len(query.split()) > 24 or _DEEP_HINTS.search(query)
+            or _SEARCH_INTENT.search(query)):
+        return "deep"
+    return "fast"
 
 
 # Anti-fabrication guard: if a reply states machine stats but no health tool was
@@ -755,14 +777,15 @@ async def respond(query: str, history: list[dict], confirm_cb=None,
     tool_sink: if given, each executed tool's {name, args, result} is appended,
     so the caller can keep real tool output in conversation memory for follow-ups.
     """
-    model = config.SMART_MODEL_DEEP if _DEEP_HINTS.search(query) else pick_model(query)
+    tier = _pick_tier(query)
+    pinned: dict | None = None          # provider that answered — kept for this turn
     is_proc_q = _is_process_question(query)
     # Only OFFER tools for a genuine action/status/search. A plain question or
     # statement gets pure conversation — the model literally cannot call a tool,
     # so general knowledge ('the Ramayana', 'distance to Ballari') can never turn
     # into a failed run_shell_command / web_search.
     use_tools = needs_tools(query) or is_proc_q
-    log.info("smart path -> %s (tools=%s): %r", model, use_tools, query)
+    log.info("smart path -> tier=%s (tools=%s): %r", tier, use_tools, query)
 
     # Focus monitor: one short line about what's actually on screen, so "pause
     # it" over Spotify and "pause it" over a film aren't the same question.
@@ -802,9 +825,10 @@ async def respond(query: str, history: list[dict], confirm_cb=None,
 
     for round_i in range(MAX_TOOL_ROUNDS):
         payload = {
-            "model": model,
             "messages": messages,
-            "max_tokens": 1000,
+            # Headroom for reasoning models (Gemini/GPT-OSS "think" before the
+            # answer, and that counts against the budget) plus the answer itself.
+            "max_tokens": 1500,
             "temperature": 0.7,
         }
         if use_tools:
@@ -813,7 +837,7 @@ async def respond(query: str, history: list[dict], confirm_cb=None,
         else:
             payload["tools"] = _info_schemas()        # look_up only — always available
             payload["tool_choice"] = "auto"
-        data = await _post(payload)
+        data, pinned = await _post(payload, tier, prefer=pinned)
         msg = data["choices"][0]["message"]
         calls = msg.get("tool_calls") or []
 
@@ -1010,8 +1034,7 @@ async def phrase(instruction: str, facts: str) -> str:
     Used by routines with say_dynamic: the numbers come from a real function, the
     model only supplies the delivery.
     """
-    data = await _post({
-        "model": config.SMART_MODEL_FAST,
+    data, _ = await _post({
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content":
@@ -1019,9 +1042,10 @@ async def phrase(instruction: str, facts: str) -> str:
                 f"or alter any number:\n{facts}\n\nReply with one or two short spoken "
                 f"sentences, in character."},
         ],
-        "max_tokens": 150,
+        # Room for a reasoning model to think AND still produce the short line.
+        "max_tokens": 500,
         "temperature": 0.6,
-    })
+    }, tier="fast")
     return (data["choices"][0]["message"]["content"] or "").strip()
 
 
