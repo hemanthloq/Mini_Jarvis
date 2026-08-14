@@ -703,6 +703,16 @@ def try_match(raw_text: str) -> Optional[CommandResult]:
             log.debug("fixed %r rejected for %r (%d words vs %d)",
                       cand, text, spoken_words, n)
             continue
+        # The mirror guard: a very short query must NOT partial-match a much
+        # longer key. WRatio scores "hi" 90 against "skip this song" (because
+        # "hi" sits inside "this") and "yo" 90 against "what did you say", so
+        # greetings were being answered with "Skipping." Reject when the key is
+        # markedly longer than the query in characters — a real short command
+        # ("mute", "skip", "pause") matches its own same-length key first.
+        if len(cand) > len(text) * 2 and len(cand) - len(text) > 4:
+            log.debug("fixed %r rejected for %r (%d chars vs %d — query too short)",
+                      cand, text, len(text), len(cand))
+            continue
         match = (cand, score)
         break
     if match:

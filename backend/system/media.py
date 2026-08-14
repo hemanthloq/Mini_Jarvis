@@ -143,16 +143,30 @@ def search_track(song: str, artist: str | None = None):
     sp = _get_spotify()
     if sp is None:
         return None, "unavailable"
-    try:
-        q = f"track:{song}" + (f" artist:{artist}" if artist else "")
-        items = sp.search(q=q, type="track", limit=6)["tracks"]["items"]
-        if not items:
-            loose = f"{song} {artist or ''}".strip()
-            items = sp.search(q=loose, type="track", limit=6)["tracks"]["items"]
-        if not items:
+    q = f"track:{song}" + (f" artist:{artist}" if artist else "")
+    loose = f"{song} {artist or ''}".strip()
+    items = None
+    for attempt in range(3):
+        try:
+            items = sp.search(q=q, type="track", limit=6)["tracks"]["items"]
+            if not items:
+                items = sp.search(q=loose, type="track", limit=6)["tracks"]["items"]
+            break
+        except Exception as e:
+            # Connection resets ('Connection aborted', ConnectionResetError 10054)
+            # are common on restrictive/campus networks that drop the Spotify API,
+            # and are usually transient — retry a couple of times before giving up.
+            msg = str(e).lower()
+            transient = any(s in msg for s in ("aborted", "reset", "timed out",
+                                               "timeout", "connection"))
+            if transient and attempt < 2:
+                log.warning("spotify search reset (attempt %d) — retrying: %s",
+                            attempt + 1, e)
+                time.sleep(0.6)
+                continue
+            log.error("spotify search failed: %s", e)
             return None, "none"
-    except Exception as e:
-        log.error("spotify search failed: %s", e)
+    if not items:
         return None, "none"
     query = f"{song} {artist or ''}".strip()
     best = max(items, key=lambda t: _score_track(query, t))
