@@ -32,7 +32,12 @@ MUTE_HOTKEY = os.getenv("MUTE_HOTKEY", "ctrl+alt+m")
 
 # Hard ceiling (seconds) on one smart-path request incl. all chained tool calls.
 # If exceeded, the request is abandoned and JARVIS says so — never a stuck HUD.
-SMART_TIMEOUT = float(os.getenv("SMART_TIMEOUT", "20"))
+# Raised 20 -> 45: a tool-using turn needs a SECOND model call to phrase the
+# tool's result, and Groq's free tier often 429s that call with a ~12s "retry
+# after" — which, on top of the tool's own network time, blew the old 20s ceiling
+# and made JARVIS say "Couldn't pin that down" AFTER the tool had already
+# succeeded. 45s absorbs one rate-limit retry so the answer actually lands.
+SMART_TIMEOUT = float(os.getenv("SMART_TIMEOUT", "45"))
 # Seconds of no keyboard/mouse input that counts as "away". On returning, JARVIS
 # greets once and mentions anything genuinely pending (system/idle.py).
 IDLE_AWAY_SECONDS = float(os.getenv("IDLE_AWAY_SECONDS", "900"))    # 15 min
