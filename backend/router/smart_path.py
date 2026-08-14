@@ -1,8 +1,8 @@
 """Smart path: the LLM, with tool-calling.
 
 Backed by Groq's OpenAI-compatible chat completions API (free tier, very fast).
-llama-3.1-8b-instant by default, escalating to llama-3.3-70b-versatile for
-anything that needs reasoning or tools.
+openai/gpt-oss-20b by default, escalating to openai/gpt-oss-120b for anything
+that needs reasoning or tools.
 
 JARVIS can invoke real tools (shell, open, list, read/write, system health —
 see router/tools.py) so open-ended requests work without a hardcoded phrase.
@@ -354,8 +354,8 @@ def pick_model(query: str) -> str:
     # leaving it to the 8b to both notice the tool and use it well.
     if (len(query.split()) > 24 or _DEEP_HINTS.search(query)
             or _SEARCH_INTENT.search(query)):
-        return config.SMART_MODEL_DEEP   # llama-3.3-70b-versatile (tool-capable)
-    return config.SMART_MODEL_FAST       # llama-3.1-8b-instant
+        return config.SMART_MODEL_DEEP   # openai/gpt-oss-120b (tool-capable)
+    return config.SMART_MODEL_FAST       # openai/gpt-oss-20b
 
 
 _RETRY_AFTER = re.compile(r"try again in ([\d.]+)s", re.I)

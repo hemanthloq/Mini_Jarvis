@@ -21,7 +21,7 @@ always spoken back for a verbal "yes" before they run.
 | **Backend** | Python 3.11+, FastAPI + Uvicorn (WebSocket server driving the HUD), asyncio orchestrator |
 | **Wake word** | [openWakeWord](https://github.com/dscripka/openWakeWord) (local, offline) — the pretrained `hey_jarvis` model OR-ed with a small custom-trained head that fires on bare "jarvis" with any prefix |
 | **Speech-to-text** | [Deepgram](https://deepgram.com) Nova streaming STT (interim transcripts, ~300 ms endpointing) |
-| **Smart path (LLM)** | [Groq](https://groq.com) OpenAI-compatible chat API — `llama-3.1-8b-instant` by default, escalating to `llama-3.3-70b-versatile` for reasoning and tool use |
+| **Smart path (LLM)** | [Groq](https://groq.com) OpenAI-compatible chat API — `openai/gpt-oss-20b` by default, escalating to `openai/gpt-oss-120b` for reasoning and tool use |
 | **Text-to-speech** | [ElevenLabs](https://elevenlabs.io) streaming TTS through a light DSP chain for the "AI-filtered" timbre, with **Windows SAPI as an automatic fallback** if ElevenLabs is unavailable |
 | **Music** | [Spotify Web API](https://developer.spotify.com) (via spotipy) with a media-key fallback |
 | **HUD** | Electron — a frameless, transparent, click-through always-on-top overlay |

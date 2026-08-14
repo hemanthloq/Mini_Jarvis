@@ -18,8 +18,8 @@ SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
 
 # ── Models (Groq, OpenAI-compatible) ────────────────────────────
-SMART_MODEL_FAST = os.getenv("SMART_MODEL_FAST", "llama-3.1-8b-instant")
-SMART_MODEL_DEEP = os.getenv("SMART_MODEL_DEEP", "llama-3.3-70b-versatile")
+SMART_MODEL_FAST = os.getenv("SMART_MODEL_FAST", "openai/gpt-oss-20b")
+SMART_MODEL_DEEP = os.getenv("SMART_MODEL_DEEP", "openai/gpt-oss-120b")
 
 # Seconds JARVIS keeps listening for a follow-up after finishing a reply
 FOLLOWUP_WINDOW = float(os.getenv("FOLLOWUP_WINDOW", "7"))
