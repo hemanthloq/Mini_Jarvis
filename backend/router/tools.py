@@ -25,6 +25,7 @@ from typing import Any, Callable
 
 import httpx
 
+import config
 from system import apps, health
 
 log = logging.getLogger("jarvis.tools")
@@ -619,9 +620,98 @@ def set_reminder(task: str = "", minutes_from_now: Any = None,
     return {"say": f"I'll remind you {reminders.spoken_when(at_ts)}, sir.", "task": task}
 
 
+_GEMINI_VISION_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+
+
+def look_at_screen(question: str = "", _confirmed: bool = False) -> Any:
+    """Screenshot the screen and ask a vision model (Gemini) about it. On-demand
+    only — nothing is captured unless this is called. Requires a Gemini key."""
+    import base64
+    if not config.GOOGLE_API_KEY:
+        return {"error": "screen vision needs a Gemini key (set GOOGLE_API_KEY)."}
+    out = str(config.DATA_DIR / ".screen.png")
+    script = str(config.ROOT / "scripts" / "capture_screen.ps1")
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+             script, "-Out", out],
+            capture_output=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW)
+        with open(out, "rb") as f:
+            img = f.read()
+    except Exception as e:
+        log.error("screen capture failed: %s", e)
+        return {"error": f"couldn't capture the screen ({type(e).__name__})"}
+    if not img:
+        return {"error": "screen capture produced no image"}
+    b64 = base64.b64encode(img).decode()
+    ask = (question or "").strip() or "Describe what's on the screen."
+    payload = {
+        "model": "gemini-flash-latest",
+        "max_tokens": 800,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": ask + " Answer in one or two spoken sentences, "
+                                           "plainly, no markdown."},
+            {"type": "image_url",
+             "image_url": {"url": f"data:image/png;base64,{b64}"}}]}],
+    }
+    headers = {"Authorization": f"Bearer {config.GOOGLE_API_KEY}",
+               "Content-Type": "application/json"}
+    try:
+        r = httpx.post(_GEMINI_VISION_URL, headers=headers, json=payload, timeout=45)
+        if r.status_code != 200:
+            log.error("vision model %s: %s", r.status_code, r.text[:200])
+            return {"error": f"the vision model returned {r.status_code}"}
+        text = (r.json()["choices"][0]["message"].get("content") or "").strip()
+        log.info("look_at_screen -> %r", text[:120])
+        return {"say": text or "I couldn't make much of the screen, sir."}
+    except Exception as e:
+        log.error("vision request failed: %s", e)
+        return {"error": f"the vision request failed ({type(e).__name__})"}
+
+
+def timer(action: str = "", minutes: Any = 0, seconds: Any = 0,
+          _confirmed: bool = False) -> Any:
+    """Countdown timer / stopwatch. action='set' (needs minutes and/or seconds),
+    'stopwatch' (start one), or 'stop' (cancel whatever's running)."""
+    from system import timers
+    a = (action or "").lower().strip()
+    if a in ("set", "timer", "start_timer"):
+        try:
+            total = int(float(minutes or 0)) * 60 + int(float(seconds or 0))
+        except (TypeError, ValueError):
+            return {"error": "minutes/seconds must be numbers"}
+        if total <= 0:
+            return {"error": "give a duration (minutes and/or seconds)"}
+        timers.set_timer(total)
+        return {"say": f"Timer set for {timers.fmt_dur(total)}, sir."}
+    if a in ("stopwatch", "start_stopwatch", "start"):
+        timers.start_stopwatch()
+        return {"say": "Stopwatch running, sir."}
+    if a in ("stop", "cancel", "stop_timer", "stop_stopwatch"):
+        return {"say": "Stopped, sir." if timers.stop() else "Nothing's running, sir."}
+    return {"error": f"unknown timer action {action!r} (use set / stopwatch / stop)"}
+
+
+def remember(fact: str = "", _confirmed: bool = False) -> Any:
+    """Save one durable fact about the user to long-term memory (persists across
+    restarts). Use for names, preferences, ongoing projects, dislikes."""
+    from system import memory
+    return {"say": memory.add(fact)}
+
+
+def forget(topic: str = "", _confirmed: bool = False) -> Any:
+    """Drop remembered facts mentioning `topic` from long-term memory."""
+    from system import memory
+    return {"say": memory.forget(topic)}
+
+
 REGISTRY: dict[str, Callable[..., Any]] = {
     "look_up": look_up,
     "get_timetable": get_timetable,
+    "look_at_screen": look_at_screen,
+    "timer": timer,
+    "remember": remember,
+    "forget": forget,
     "set_volume": set_volume,
     "set_brightness": set_brightness,
     "media_control": media_control,
@@ -664,6 +754,63 @@ SCHEMAS = [
                                            "weekday like 'friday'. Omit for today."},
                 },
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "look_at_screen",
+            "description": (
+                "Take a screenshot and have a vision model look at it. Use for "
+                "'what's on my screen', 'what does this error mean', 'summarise this "
+                "page', 'help me with what I'm looking at'. Pass the user's actual "
+                "question so the answer is specific."),
+            "parameters": {"type": "object", "properties": {
+                "question": {"type": "string",
+                             "description": "What to find out about the screen."},
+            }},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "timer",
+            "description": (
+                "Countdown timer or stopwatch. action='set' to start a countdown "
+                "(give minutes and/or seconds), 'stopwatch' to start a stopwatch, "
+                "'stop' to cancel whatever is running. For 'wake me in 10 minutes' "
+                "use set_reminder instead; this is for a visible on-screen timer."),
+            "parameters": {"type": "object", "properties": {
+                "action": {"type": "string", "enum": ["set", "stopwatch", "stop"]},
+                "minutes": {"type": "number", "description": "Countdown minutes (action=set)."},
+                "seconds": {"type": "number", "description": "Countdown seconds (action=set)."},
+            }, "required": ["action"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember",
+            "description": (
+                "Save ONE durable fact about the user to long-term memory (persists "
+                "across restarts). Use when the user asks you to remember something, "
+                "or shares a lasting preference, name, ongoing project, or dislike "
+                "('remember I prefer dark mode', 'my sister's name is Anya'). Do NOT "
+                "use it for one-off/transient things."),
+            "parameters": {"type": "object", "properties": {
+                "fact": {"type": "string", "description": "The fact, as one short sentence."},
+            }, "required": ["fact"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "forget",
+            "description": ("Remove remembered facts about a topic from long-term "
+                            "memory ('forget what I said about my car')."),
+            "parameters": {"type": "object", "properties": {
+                "topic": {"type": "string", "description": "Keyword of what to forget."},
+            }, "required": ["topic"]},
         },
     },
     {

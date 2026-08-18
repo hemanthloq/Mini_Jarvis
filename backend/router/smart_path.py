@@ -129,6 +129,11 @@ SYSTEM_PROMPT = (
     "- NEVER say 'I couldn't find any information on X' or 'I'm not familiar with "
     "X' unless look_up actually ran and came back empty — saying it without "
     "looking claims a search you never performed.\n"
+    "- LONG-TERM MEMORY: when he asks you to remember something, or shares a "
+    "lasting fact/preference/name/project worth keeping, call remember to save it. "
+    "Call forget to drop something. What you already know is in WHAT YOU KNOW ABOUT "
+    "THE USER above — use it naturally, never recite it, and never re-save a fact "
+    "already listed there.\n"
     "- For ANYTHING about the user's CLASSES, lectures, labs, timetable, periods, "
     "or when they are free — however phrased — call get_timetable and answer from "
     "it. It reads their real local schedule and the clock. Never guess it, and "
@@ -226,8 +231,10 @@ _ACTION_INTENT = re.compile(
     r"text|message|send|remind|snooze)\b"
     r"|\bturn\s+(?:it|the\s+volume|the\s+brightness|up|down|off|on)\b"
     # media transport + volume/brightness said as adjectives, and reminders
-    r"|\b(reminder|skip|louder|quieter|softer|brighter|dimmer)\b"
-    r"|\b(?:next|previous|last)\s+(?:song|track)\b",
+    r"|\b(reminder|skip|louder|quieter|softer|brighter|dimmer|timer|stopwatch)\b"
+    r"|\b(?:next|previous|last)\s+(?:song|track)\b"
+    # screen vision ("what's on my screen", "look at this", "read this error")
+    r"|\bscreen\b|\blook\s+at\s+(?:this|that|my|the)\b|\bon\s+(?:my|the)\s+screen\b",
     re.I)
 
 # A question about THIS machine's live state (needs get_system_health / processes).
@@ -339,7 +346,8 @@ def _info_schemas() -> list:
     global _INFO_SCHEMAS
     if _INFO_SCHEMAS is None:
         _INFO_SCHEMAS = [s for s in tools.SCHEMAS
-                         if s["function"]["name"] in ("look_up", "get_timetable")]
+                         if s["function"]["name"] in ("look_up", "get_timetable",
+                                                      "remember", "forget")]
     return _INFO_SCHEMAS
 
 
@@ -720,6 +728,18 @@ def _schedule_context(query: str) -> str:
         return ""
 
 
+def _memory_context() -> str:
+    """The user's long-term memory (name, preferences, projects), injected every
+    turn so JARVIS actually knows who it's talking to across restarts. Written by
+    the remember/forget tools; see system/memory.py."""
+    try:
+        from system import memory
+        return memory.context_block()
+    except Exception as e:                       # never break a turn over memory
+        log.debug("memory context unavailable: %s", e)
+        return ""
+
+
 _CODE_FENCE = re.compile(r"```[\w+-]*\n?(.*?)```", re.S)
 # A model that ignores the fence rule still must not have code read aloud, so
 # catch bare code-shaped lines too: assignments, defs, imports, calls, braces.
@@ -796,8 +816,8 @@ async def respond(query: str, history: list[dict], confirm_cb=None,
     # it" over Spotify and "pause it" over a film aren't the same question.
     # Appended to the system message rather than injected as a fake user turn,
     # so it never pollutes conversation memory or the correction rules above.
-    system_base = (SYSTEM_PROMPT + _now_context() + _clipboard_context(query)
-                   + _schedule_context(query))
+    system_base = (SYSTEM_PROMPT + _now_context() + _memory_context()
+                   + _clipboard_context(query) + _schedule_context(query))
     try:
         from system import foreground
         on_screen = foreground.activity_context()

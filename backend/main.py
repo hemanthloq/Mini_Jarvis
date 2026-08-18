@@ -30,7 +30,7 @@ from audio.player import PLAYER
 from router import fast_path, refer, routines, smart_path
 from state import IDLE, LISTENING, SLEEPING, SPEAKING, STATE, THINKING
 from system import briefing, clipboard, ducking, foreground, health, idle, indexer
-from system import media, reminders, timetable
+from system import media, reminders, timetable, timers
 from system import weather as weather_mod
 
 # Rotating, not a single ever-growing file. The per-frame barge/wake debug lines
@@ -62,6 +62,13 @@ TOOL_STEP_LABELS = {
     "open_url":          "opening the browser",
     "get_system_health": "checking the machine",
     "get_top_processes": "checking what's running",
+    "look_at_screen":    "looking at your screen",
+    "get_timetable":     "checking your timetable",
+    "remember":          "making a note",
+    "forget":            "clearing that",
+    "set_reminder":      "setting a reminder",
+    "play_music":        "queuing that up",
+    "find_file":         "searching your files",
 }
 
 # Date of the last morning briefing, so it fires once a day and not on every
@@ -84,8 +91,7 @@ _confirming = False                 # awaiting a spoken yes/no on a destructive
 _last_spoken = ""                   # the last line JARVIS actually said, for
                                     # "repeat that" / "say that again"
 _snooze_until = 0.0                 # monotonic deadline of a timed do-not-disturb
-_timer = None                       # active timer/stopwatch for the HUD widget:
-                                    # {"kind":"timer","end":ts} or {"kind":"stopwatch","start":ts}
+# Timer/stopwatch state now lives in system/timers.py (shared with the tool).
 
 AFFIRMATIVE = ("yes", "yeah", "yep", "yup", "sure", "please do", "go ahead", "do it",
                "confirm", "confirmed", "affirmative", "okay", "ok", "alright", "aye")
@@ -695,32 +701,23 @@ async def _start_snooze(minutes: int) -> None:
 
 
 # ── Timer / stopwatch ───────────────────────────────────────────
-def _fmt_dur(secs: int) -> str:
-    secs = int(secs)
-    if secs >= 3600:
-        h, m = secs // 3600, (secs % 3600) // 60
-        s = f"{h} hour" + ("s" if h != 1 else "")
-        return s + (f" {m} minutes" if m else "")
-    if secs >= 60:
-        m = secs // 60
-        return f"{m} minute" + ("s" if m != 1 else "")
-    return f"{secs} second" + ("s" if secs != 1 else "")
+# State lives in system/timers.py so the fast path, the smart-path `timer` tool,
+# and the HUD ticker all share one source of truth. _fmt_dur == timers.fmt_dur.
+_fmt_dur = timers.fmt_dur
 
 
 async def _handle_timer(cmd: str, data: dict) -> None:
-    global _timer
     if cmd == "timer_set":
         secs = int(data.get("seconds", 60))
-        _timer = {"kind": "timer", "end": time.monotonic() + secs, "total": secs}
+        timers.set_timer(secs)
         STATE.timer({"kind": "timer", "remaining": secs, "total": secs})
         await _speak(f"Timer set for {_fmt_dur(secs)}, sir.", cached_ok=False)
     elif cmd == "stopwatch_start":
-        _timer = {"kind": "stopwatch", "start": time.monotonic()}
+        timers.start_stopwatch()
         STATE.timer({"kind": "stopwatch", "elapsed": 0})
         await _speak("Stopwatch running, sir.", cached_ok=False)
     elif cmd == "timer_stop":
-        if _timer:
-            _timer = None
+        if timers.stop():
             STATE.timer({"kind": "none"})
             await _speak("Stopped, sir.", cached_ok=False)
         else:
@@ -729,13 +726,11 @@ async def _handle_timer(cmd: str, data: dict) -> None:
 
 def _toggle_stopwatch() -> None:
     """HUD click on the round widget: start a stopwatch, or stop the running one."""
-    global _timer
-    if _timer and _timer.get("kind") == "stopwatch":
-        _timer = None
-        STATE.timer({"kind": "none"})
-    elif not _timer:
-        _timer = {"kind": "stopwatch", "start": time.monotonic()}
+    result = timers.toggle_stopwatch()
+    if result == "started":
         STATE.timer({"kind": "stopwatch", "elapsed": 0})
+    elif result == "stopped":
+        STATE.timer({"kind": "none"})
 
 
 async def _fire_timer() -> None:
@@ -1214,26 +1209,16 @@ async def _startup():
                 log.error("return greeter failed: %s", e)
 
     async def timer_ticker():
-        """Broadcast the active timer/stopwatch to the HUD each second, and fire a
-        completed timer's in-character alert."""
-        global _timer
+        """Broadcast the active timer/stopwatch (from system/timers) to the HUD each
+        second, and fire a completed timer's in-character alert."""
         while True:
             await asyncio.sleep(1)
-            t = _timer
-            if not t:
-                continue
-            now = time.monotonic()
-            if t["kind"] == "timer":
-                remaining = t["end"] - now
-                if remaining <= 0:
-                    _timer = None
-                    STATE.timer({"kind": "none"})
-                    await _fire_timer()
-                else:
-                    STATE.timer({"kind": "timer", "remaining": int(round(remaining)),
-                                 "total": t.get("total", 0)})
-            else:
-                STATE.timer({"kind": "stopwatch", "elapsed": int(now - t["start"])})
+            snap = timers.snapshot()
+            if snap["fired"]:
+                STATE.timer({"kind": "none"})
+                await _fire_timer()
+            elif snap["hud"]["kind"] != "none":
+                STATE.timer(snap["hud"])
 
     _loop.create_task(wake_watchdog())
     _loop.create_task(overlay_watch())
