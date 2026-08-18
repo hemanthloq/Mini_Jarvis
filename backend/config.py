@@ -73,6 +73,11 @@ IDLE_AWAY_SECONDS = float(os.getenv("IDLE_AWAY_SECONDS", "900"))    # 15 min
 # City for the boot-briefing weather line (wttr.in — no key needed)
 WEATHER_CITY = os.getenv("WEATHER_CITY", "Bengaluru")
 
+# Proactive nudges (see proactive_watch in main.py). Minutes-before-class to warn;
+# minutes of continuous focus before suggesting a break (0 disables the break one).
+CLASS_NUDGE_MINUTES = float(os.getenv("CLASS_NUDGE_MINUTES", "10"))
+SESSION_BREAK_MINUTES = float(os.getenv("SESSION_BREAK_MINUTES", "90"))
+
 # Barge-in: how loud (mic RMS, 0..1) speech must be to interrupt JARVIS mid-reply.
 # Measured on this machine: its own voice comes back at <=0.011 (Windows cancels
 # most of it); a person speaking lands around 0.03+. Raise if it interrupts

@@ -33,6 +33,10 @@ psutil>=6.0            # REAL system health (CPU/RAM/disk/battery)
 scikit-learn>=1.5
 pyttsx3>=2.90          # local SAPI voices to synthesize training samples
 
+# Reading Windows notifications aloud (best-effort; needs notification access
+# granted to Python in Windows Settings). Optional — the feature degrades cleanly.
+winsdk>=1.0
+
 # Media
 spotipy>=2.24
 send2trash

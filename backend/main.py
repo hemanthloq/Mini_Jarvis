@@ -1220,12 +1220,86 @@ async def _startup():
             elif snap["hud"]["kind"] != "none":
                 STATE.timer(snap["hud"])
 
+    async def proactive_watch():
+        """Gentle, de-duped nudges: an imminent class, and a break after a long
+        continuous focus stretch. Same discipline as reminders — never talks over
+        an active turn, and never wakes a sleeping or muted JARVIS."""
+        last_class_key = None                       # (day, start_min) already warned
+        active_since = time.monotonic()
+        break_nudged = False
+        break_after = config.SESSION_BREAK_MINUTES * 60
+        BREAK_RESET_IDLE = 300                      # a 5-min break resets the stretch
+        while True:
+            await asyncio.sleep(30)
+            try:
+                # Track continuous focus even mid-conversation; a real break resets.
+                if idle.idle_seconds() >= BREAK_RESET_IDLE:
+                    active_since = time.monotonic()
+                    break_nudged = False
+
+                if STATE.state != "idle" or _busy.locked():
+                    continue
+                if _sleeping or (_wake_listener and _wake_listener.is_muted()):
+                    continue
+
+                line = None
+                # 1) A class starting soon (today only).
+                try:
+                    nxt = timetable.next_class()
+                except Exception:
+                    nxt = None
+                if nxt is not None:
+                    e, when = nxt
+                    day, mnow = timetable._now()
+                    if when.startswith("at"):
+                        mins_to = e["start"] - mnow
+                        key = (day, e["start"])
+                        if 0 < mins_to <= config.CLASS_NUDGE_MINUTES and key != last_class_key:
+                            last_class_key = key
+                            where = f" in {e['where']}" if e["where"] else ""
+                            line = (f"Heads up, sir — {e['subject']}{where} in about "
+                                    f"{int(mins_to)} minute{'s' if int(mins_to) != 1 else ''}.")
+                # 2) A long focus stretch (only if there's no class nudge this cycle).
+                elapsed = time.monotonic() - active_since
+                if (line is None and break_after > 0 and not break_nudged
+                        and elapsed >= break_after):
+                    break_nudged = True
+                    line = (f"You've been heads-down for {timers.fmt_dur(int(elapsed))}, "
+                            f"sir. Might be worth a breather.")
+                if line is None:
+                    continue
+
+                log.info("proactive nudge: %s", line)
+                async with _busy:
+                    if _sleeping:
+                        continue
+                    ducking.duck()
+                    try:
+                        await _speak(line, cached_ok=False)
+                        await _wait_playback()
+                    finally:
+                        ducking.unduck()
+            except Exception as e:
+                log.error("proactive watch failed: %s", e)
+
     _loop.create_task(wake_watchdog())
     _loop.create_task(overlay_watch())
     clipboard.WATCHER.start()      # event-driven; no polling task needed
     _loop.create_task(reminder_checker())
     _loop.create_task(return_greeter())
     _loop.create_task(timer_ticker())
+    _loop.create_task(proactive_watch())
+
+    # Warm the semantic file-search embeddings in the background so the first
+    # "find that file about X" is instant. Only rebuilds when the index changes.
+    if config.GOOGLE_API_KEY:
+        async def _warm_filesearch():
+            try:
+                from system import filesearch
+                await _loop.run_in_executor(None, filesearch.ensure_index)
+            except Exception as e:
+                log.debug("filesearch warm-up skipped: %s", e)
+        _loop.create_task(_warm_filesearch())
 
     STATE.set_state(IDLE)
     log.info("JARVIS backend up on %s:%d", config.HOST, config.PORT)

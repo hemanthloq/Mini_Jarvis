@@ -669,6 +669,39 @@ def look_at_screen(question: str = "", _confirmed: bool = False) -> Any:
         return {"error": f"the vision request failed ({type(e).__name__})"}
 
 
+def get_notifications(_confirmed: bool = False) -> Any:
+    """Read the current Windows notifications. Best-effort: needs notification
+    access granted to Python in Windows Settings."""
+    from system import notifications as notif
+    status, items = notif.read()
+    if status == "denied":
+        return {"say": "I don't have notification access, sir — you can turn it on "
+                       "under Settings, Privacy and security, Notifications."}
+    if status != "ok":
+        return {"say": "I can't read notifications on this machine, sir."}
+    if not items:
+        return {"say": "Nothing new in your notifications, sir."}
+    return {"notifications": items[:8],
+            "note": "Read these aloud briefly — app plus who/what. Skip clutter."}
+
+
+def find_file(description: str = "", _confirmed: bool = False) -> Any:
+    """Find a file by MEANING (semantic search over the index), e.g. 'the PDF
+    about graphs' -> DSA notes. Returns ranked candidates to open or offer."""
+    from system import filesearch
+    if not (description or "").strip():
+        return {"error": "describe the file you're looking for"}
+    res = filesearch.search(description, top_k=5)
+    if not res.get("ready"):
+        return {"error": res.get("note", "semantic file search is unavailable")}
+    hits = res.get("results") or []
+    if not hits:
+        return {"say": "Nothing close on this machine, sir."}
+    return {"matches": hits,
+            "note": "Semantic matches, best first. If the top one is clearly right, "
+                    "open it with open_path (pass its 'name'). Otherwise ask which."}
+
+
 def timer(action: str = "", minutes: Any = 0, seconds: Any = 0,
           _confirmed: bool = False) -> Any:
     """Countdown timer / stopwatch. action='set' (needs minutes and/or seconds),
@@ -709,6 +742,8 @@ REGISTRY: dict[str, Callable[..., Any]] = {
     "look_up": look_up,
     "get_timetable": get_timetable,
     "look_at_screen": look_at_screen,
+    "find_file": find_file,
+    "get_notifications": get_notifications,
     "timer": timer,
     "remember": remember,
     "forget": forget,
@@ -769,6 +804,31 @@ SCHEMAS = [
                 "question": {"type": "string",
                              "description": "What to find out about the screen."},
             }},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_notifications",
+            "description": ("Read the user's current Windows notifications aloud. "
+                            "Use for 'any notifications?', 'read my notifications', "
+                            "'did I get any messages'."),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_file",
+            "description": (
+                "Find a file by MEANING when the exact name isn't known — 'the PDF "
+                "about graphs', 'my notes on operating systems', 'that photo from "
+                "the trip'. Returns ranked candidates. To OPEN a file the user names "
+                "exactly, use open_path instead; this is for fuzzy/among-many finds."),
+            "parameters": {"type": "object", "properties": {
+                "description": {"type": "string",
+                                "description": "What the file is about / contains."},
+            }, "required": ["description"]},
         },
     },
     {

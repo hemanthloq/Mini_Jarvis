@@ -228,10 +228,11 @@ _ACTION_INTENT = re.compile(
     r"kill|delete|remove|erase|trash|uninstall|install|move|rename|copy|"
     r"set|change|adjust|increase|raise|decrease|lower|mute|unmute|dim|brighten|"
     r"crank|lock|screenshot|rebuild|shut\s*down|restart|reboot|"
-    r"text|message|send|remind|snooze)\b"
+    r"text|message|send|remind|snooze|find|locate)\b"
     r"|\bturn\s+(?:it|the\s+volume|the\s+brightness|up|down|off|on)\b"
     # media transport + volume/brightness said as adjectives, and reminders
-    r"|\b(reminder|skip|louder|quieter|softer|brighter|dimmer|timer|stopwatch)\b"
+    r"|\b(reminder|skip|louder|quieter|softer|brighter|dimmer|timer|stopwatch|"
+    r"notification|notifications)\b"
     r"|\b(?:next|previous|last)\s+(?:song|track)\b"
     # screen vision ("what's on my screen", "look at this", "read this error")
     r"|\bscreen\b|\blook\s+at\s+(?:this|that|my|the)\b|\bon\s+(?:my|the)\s+screen\b",
