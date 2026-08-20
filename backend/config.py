@@ -34,7 +34,9 @@ LLM_PROVIDERS = [
      "base": os.getenv("GEMINI_BASE",
                        "https://generativelanguage.googleapis.com/v1beta/openai"),
      "key": GOOGLE_API_KEY,
-     "fast": os.getenv("GEMINI_MODEL_FAST", "gemini-flash-latest"),
+     # flash-lite is lighter/faster and burns far less of the daily free quota on
+     # simple turns; the fuller flash handles reasoning/tool/search (deep) turns.
+     "fast": os.getenv("GEMINI_MODEL_FAST", "gemini-flash-lite-latest"),
      "deep": os.getenv("GEMINI_MODEL_DEEP", "gemini-flash-latest")},
     {"name": "cerebras",
      "base": os.getenv("CEREBRAS_BASE", "https://api.cerebras.ai/v1"),

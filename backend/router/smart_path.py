@@ -372,62 +372,91 @@ def pick_model(query: str) -> str:
     return config.SMART_MODEL_FAST       # openai/gpt-oss-20b
 
 
+# Providers that returned an auth/payment/quota-permanent error this session are
+# parked here so we stop wasting a hop on them every turn (e.g. Cerebras 402 when
+# billing isn't enabled). Cleared on restart, so fixing billing + relaunch revives
+# them. Rate-limits (429) are NOT permanent and never land here.
+_dead_providers: set[str] = set()
+# How long the whole chain waits before retrying when EVERY brain is momentarily
+# throttled. A 429 resets within the minute — often seconds — so a short wait then
+# a second attempt rescues the turn instead of failing it. First pass = no wait.
+_CHAIN_BACKOFFS = (0.0, 2.5, 5.0)
+
+
 def _providers() -> list[dict]:
-    """Configured providers (those with a key), in priority order."""
-    return [p for p in config.LLM_PROVIDERS if p.get("key")]
+    """Configured providers with a key, minus any disabled this session."""
+    return [p for p in config.LLM_PROVIDERS
+            if p.get("key") and p["name"] not in _dead_providers]
 
 
 async def _post(payload: dict, tier: str = "fast", prefer: dict | None = None):
     """POST an OpenAI-format chat request, trying each provider until one answers.
 
-    A rate-limit or error on one provider switches IMMEDIATELY to the next rather
-    than waiting — that is what keeps a throttled free tier from timing out the
-    turn, and makes any single provider's outage or decommission a non-event.
-
-    `tier` picks the model ('fast'/'deep') per provider. `prefer` pins a provider
-    first, so a turn's follow-up tool calls stay on the backend that started it.
-    Returns (response_json, provider_used).
+    Order per attempt: `prefer` first (so a turn's tool loop stays on one backend),
+    then the rest. A rate-limit/overload (429/5xx) switches to the next provider
+    immediately; an auth/payment error (401/402/403) DISABLES that provider for the
+    session. If the whole chain is throttled, it backs off briefly and retries the
+    chain — because a 429 clears in seconds, and failing instantly wastes a turn the
+    model otherwise handled fine. Returns (response_json, provider_used).
     """
-    provs = _providers()
-    if not provs:
-        raise RuntimeError("no LLM provider configured (set GOOGLE_API_KEY / "
-                           "CEREBRAS_API_KEY / GROQ_API_KEY in .env)")
-    if prefer is not None:
-        provs = [prefer] + [p for p in provs if p["name"] != prefer["name"]]
-
+    if not _providers():
+        raise RuntimeError("no working LLM provider (check GOOGLE_API_KEY / "
+                           "GROQ_API_KEY / CEREBRAS_API_KEY and billing)")
     last_err = "no attempt made"
     async with httpx.AsyncClient(timeout=40) as client:
-        for p in provs:
-            body = {**payload, "model": p[tier]}
-            url = p["base"].rstrip("/") + "/chat/completions"
-            headers = {"Authorization": f"Bearer {p['key']}",
-                       "Content-Type": "application/json"}
-            for attempt in range(2):          # one deterministic retry per provider
-                try:
-                    r = await client.post(url, headers=headers, json=body)
-                except Exception as e:        # unreachable -> next provider
-                    last_err = f"{p['name']} {type(e).__name__}: {e}"
-                    log.warning("provider %s unreachable (%s) — trying next", p["name"], e)
-                    break
-                if r.status_code == 200:
-                    if p is not provs[0]:
-                        log.info("smart path answered by fallback provider %r", p["name"])
-                    return r.json(), p
-                # Throttled or overloaded: don't wait — switch providers.
-                if r.status_code in (429, 500, 502, 503, 529):
-                    last_err = f"{p['name']} {r.status_code}"
-                    log.warning("provider %s returned %s — switching provider",
-                                p["name"], r.status_code)
-                    break
-                # A malformed tool call (some models emit bad JSON); one low-temp retry.
-                if (r.status_code == 400 and "tool_use_failed" in r.text
-                        and attempt == 0):
-                    log.warning("provider %s tool_use_failed — retry at low temp", p["name"])
-                    body = {**body, "temperature": 0.1}
-                    continue
-                last_err = f"{p['name']} {r.status_code}: {r.text[:150]}"
-                log.warning("provider %s error (%s) — trying next", p["name"], last_err)
+        for wait in _CHAIN_BACKOFFS:
+            provs = _providers()
+            if not provs:
                 break
+            if prefer is not None and prefer["name"] not in _dead_providers:
+                provs = [prefer] + [p for p in provs if p["name"] != prefer["name"]]
+            if wait:
+                log.warning("every brain is throttled — waiting %.1fs then retrying "
+                            "the chain", wait)
+                await asyncio.sleep(wait)
+
+            throttled = False               # did anything fail with a TRANSIENT error?
+            for p in provs:
+                body = {**payload, "model": p[tier]}
+                url = p["base"].rstrip("/") + "/chat/completions"
+                headers = {"Authorization": f"Bearer {p['key']}",
+                           "Content-Type": "application/json"}
+                for attempt in range(2):
+                    try:
+                        r = await client.post(url, headers=headers, json=body)
+                    except Exception as e:              # a blip is worth a retry
+                        last_err = f"{p['name']} {type(e).__name__}"
+                        throttled = True
+                        log.warning("provider %s unreachable (%s) — next", p["name"], e)
+                        break
+                    if r.status_code == 200:
+                        if p["name"] != provs[0]["name"]:
+                            log.info("smart path answered by fallback provider %r", p["name"])
+                        return r.json(), p
+                    if r.status_code in (401, 402, 403):
+                        _dead_providers.add(p["name"])
+                        last_err = f"{p['name']} {r.status_code} (disabled this session)"
+                        log.warning("provider %s returned %s — disabling it for this "
+                                    "session (fix billing/key + restart to revive)",
+                                    p["name"], r.status_code)
+                        break
+                    if r.status_code in (429, 500, 502, 503, 529):
+                        throttled = True
+                        last_err = f"{p['name']} {r.status_code}"
+                        log.warning("provider %s returned %s — switching provider",
+                                    p["name"], r.status_code)
+                        break
+                    if (r.status_code == 400 and "tool_use_failed" in r.text
+                            and attempt == 0):
+                        log.warning("provider %s tool_use_failed — retry at low temp",
+                                    p["name"])
+                        body = {**body, "temperature": 0.1}
+                        continue
+                    last_err = f"{p['name']} {r.status_code}: {r.text[:150]}"
+                    log.warning("provider %s error (%s) — trying next", p["name"], last_err)
+                    break
+            if not throttled:
+                break                       # only hard errors — a retry won't help
     raise RuntimeError(f"all LLM providers failed ({last_err})")
 
 
@@ -438,6 +467,24 @@ def _pick_tier(query: str) -> str:
             or _SEARCH_INTENT.search(query)):
         return "deep"
     return "fast"
+
+
+def _clean_calls(calls: list) -> list:
+    """Normalise tool_calls to the plain OpenAI shape before storing them in the
+    message history. Gemini attaches a non-standard 'extra_content' field to its
+    tool_calls that Cerebras/Groq reject with a 400 — so a tool call made on one
+    brain would break the follow-up call on another. Keep only the standard fields
+    so the conversation stays portable across every provider."""
+    out = []
+    for i, c in enumerate(calls or []):
+        fn = c.get("function") or {}
+        out.append({
+            "id": c.get("id") or f"call_{i}",
+            "type": "function",
+            "function": {"name": fn.get("name", ""),
+                         "arguments": fn.get("arguments") or "{}"},
+        })
+    return out
 
 
 # Anti-fabrication guard: if a reply states machine stats but no health tool was
@@ -994,7 +1041,7 @@ async def respond(query: str, history: list[dict], confirm_cb=None,
             return
 
         messages.append({"role": "assistant", "content": msg.get("content") or "",
-                         "tool_calls": calls})
+                         "tool_calls": _clean_calls(calls)})
 
         for call in calls:
             name = call["function"]["name"]
