@@ -401,7 +401,11 @@ async def _post(payload: dict, tier: str = "fast", prefer: dict | None = None):
     """
     if not _providers():
         raise RuntimeError("no working LLM provider (check GOOGLE_API_KEY / "
-                           "GROQ_API_KEY / CEREBRAS_API_KEY and billing)")
+                           "GROQ_API_KEY in .env)")
+    # Cap the model's internal "thinking" by tier — this is the big latency lever.
+    # Fast turns barely reason (snappy ~1s); deep turns get a moderate budget for
+    # tool/reasoning work without the multi-second stalls of unbounded thinking.
+    reasoning = "low" if tier == "fast" else "medium"
     last_err = "no attempt made"
     async with httpx.AsyncClient(timeout=40) as client:
         for wait in _CHAIN_BACKOFFS:
@@ -417,7 +421,7 @@ async def _post(payload: dict, tier: str = "fast", prefer: dict | None = None):
 
             throttled = False               # did anything fail with a TRANSIENT error?
             for p in provs:
-                body = {**payload, "model": p[tier]}
+                body = {**payload, "model": p[tier], "reasoning_effort": reasoning}
                 url = p["base"].rstrip("/") + "/chat/completions"
                 headers = {"Authorization": f"Bearer {p['key']}",
                            "Content-Type": "application/json"}
