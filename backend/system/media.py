@@ -28,6 +28,47 @@ _spotify = None
 _spotify_err: str | None = None
 
 
+_ipv4_forced = False
+
+
+def _force_ipv4() -> None:
+    """Pin urllib3/requests to IPv4. api.spotify.com was resetting every
+    connection (WinError 10054) while every other API worked — the classic sign
+    of a broken IPv6 route: the host resolves to an unreachable v6 address and the
+    connection is torn down. Forcing IPv4 sidesteps it. Scoped to when Spotify is
+    actually used, and IPv4 is universally reachable, so the blast radius is tiny."""
+    global _ipv4_forced
+    if _ipv4_forced:
+        return
+    try:
+        import socket
+        import urllib3.util.connection as u3c
+        u3c.allowed_gai_family = lambda: socket.AF_INET
+        _ipv4_forced = True
+        log.info("spotify: forced IPv4 for HTTP (avoids WinError 10054 resets)")
+    except Exception as e:
+        log.debug("could not force IPv4: %s", e)
+
+
+def _hardened_session():
+    """A requests session that retries connection resets at the urllib3 level —
+    more robust than a Python-loop retry, since it also covers resets that happen
+    mid-handshake."""
+    import requests
+    from requests.adapters import HTTPAdapter
+    session = requests.Session()
+    try:
+        from urllib3.util.retry import Retry
+        retry = Retry(total=4, connect=4, read=4, backoff_factor=0.6,
+                      status_forcelist=(500, 502, 503, 504), allowed_methods=None)
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+    except Exception as e:
+        log.debug("could not attach retry adapter: %s", e)
+    return session
+
+
 def _get_spotify():
     """Lazy-init spotipy client. Returns None if not configured."""
     global _spotify, _spotify_err
@@ -39,14 +80,19 @@ def _get_spotify():
     try:
         import spotipy
         from spotipy.oauth2 import SpotifyOAuth
-        _spotify = spotipy.Spotify(auth_manager=SpotifyOAuth(
+        _force_ipv4()
+        auth = SpotifyOAuth(
             client_id=config.SPOTIFY_CLIENT_ID,
             client_secret=config.SPOTIFY_CLIENT_SECRET,
             redirect_uri=config.SPOTIFY_REDIRECT_URI,
             scope="user-modify-playback-state user-read-playback-state",
             cache_path=str(config.SPOTIFY_TOKEN_CACHE),
             open_browser=True,
-        ))
+            requests_session=_hardened_session(),
+        )
+        _spotify = spotipy.Spotify(auth_manager=auth,
+                                   requests_session=_hardened_session(),
+                                   requests_timeout=15, retries=0)
     except Exception as e:  # keep the assistant alive if auth fails
         log.error("spotify init failed: %s", e)
         _spotify_err = str(e)
